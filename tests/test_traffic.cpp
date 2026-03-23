@@ -1,6 +1,6 @@
 #define CATCH_CONFIG_MAIN
 #include "../include/catch.hpp"
-#include "../include/httplib.h"
+#include "../include/httplib_vendor.h"
 
 #include <atomic>
 #include <chrono>

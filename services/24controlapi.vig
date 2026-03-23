@@ -1,7 +1,7 @@
 # 24Control Backend service definition
 
 name = 24control
-domain = 24control.rfas.software
+domain = 24controlapi.rfas.software
 port = 3001
 type = process
 command = cd /home/pi/Desktop/Projects/24Control/backend && node server.js

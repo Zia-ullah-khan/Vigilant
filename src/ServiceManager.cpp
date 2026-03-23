@@ -1,6 +1,6 @@
 #include "../include/ServiceManager.h"
 #include "../include/Logger.h"
-#include "../include/httplib.h"
+#include "../include/httplib_vendor.h"
 
 #include <iostream>
 #include <cstdlib>
@@ -12,6 +12,8 @@
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#include <process.h>
 #endif
 
 #ifdef _WIN32
@@ -26,7 +28,6 @@ inline int kill(pid_t, int) { return 0; }
 inline pid_t waitpid(pid_t, int*, int) { return -1; }
 inline pid_t fork() { return 1; }
 inline void setsid() {}
-inline int execl(const char*, ...) { return -1; }
 inline void _exit(int status) { exit(status); }
 #endif
 
@@ -263,7 +264,11 @@ bool ServiceManager::StartProcess(ServiceState& state)
     if (pid == 0)
     {
         setsid();
+#ifdef _WIN32
+        _execl("cmd.exe", "cmd.exe", "/c", state.config.command.c_str(), nullptr);
+#else
         execl("/bin/sh", "sh", "-c", state.config.command.c_str(), nullptr);
+#endif
         // If execl returns, it means it failed
         Logger::Error("Execl failed for: " + state.config.name);
         _exit(1);

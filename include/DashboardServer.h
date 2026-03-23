@@ -1,6 +1,6 @@
 #pragma once
 
-#include "httplib.h"
+#include "httplib_vendor.h"
 #include <thread>
 #include <atomic>
 
