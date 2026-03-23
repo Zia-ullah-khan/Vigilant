@@ -31,18 +31,19 @@ static std::string Exec(const std::string& cmd)
 {
     std::array<char, 256> buffer;
     std::string result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    FILE* pipe = popen(cmd.c_str(), "r");
 
     if (!pipe)
     {
         return "";
     }
 
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr)
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
     {
         result += buffer.data();
     }
 
+    pclose(pipe);
     return result;
 }
 

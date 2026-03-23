@@ -18,7 +18,7 @@ typedef int pid_t;
 struct ServiceState
 {
     VigService config;
-    std::atomic<bool> awake{false};
+    bool awake = false;
     std::chrono::steady_clock::time_point lastActivity;
     pid_t pid = 0;
 };
