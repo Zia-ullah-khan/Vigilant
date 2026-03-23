@@ -1,11 +1,10 @@
-# 24Control API service definition
-# Example of a process-based service (not Docker)
+# 24Control Backend service definition
 
-name = 24controlapi
-domain = 24controlapi.rfas.software
-port = 8082
+name = 24control
+domain = 24control.rfas.software
+port = 3001
 type = process
-command = python3 /opt/24control/api.py
-pidfile = /var/run/24controlapi.pid
-health = /api/health
-timeout = 15
+command = cd /home/pi/Desktop/Projects/24Control/backend && node server.js
+pidfile = /tmp/24control.pid
+health = /
+timeout = 30

@@ -63,18 +63,18 @@ TEST_CASE("Vigilant Load Testing", "[load]") {
     
     SECTION("Low Traffic") {
         int success = 0, fails = 0;
-        MakeRequest("studysync.rfas.software", success, fails);
+        MakeRequest("24control.rfas.software", success, fails);
         REQUIRE(success == 1);
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        MakeRequest("robotrader.rfas.software", success, fails);
+        MakeRequest("24control.rfas.software", success, fails);
         REQUIRE(success == 2);
     }
     
     SECTION("Normal Traffic - Concurrency") {
-        TrafficBurst("studysync.rfas.software", 20, 4);
+        TrafficBurst("24control.rfas.software", 20, 4);
     }
     
     SECTION("High Traffic - DDoS Simulation") {
-        TrafficBurst("robotrader.rfas.software", 200, 20);
+        TrafficBurst("24control.rfas.software", 200, 20);
     }
 }
