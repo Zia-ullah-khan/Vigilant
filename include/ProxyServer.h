@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ServiceManager.h"
-#include "httplib.h"
+#include "httplib_vendor.h"
 
 #include <string>
 #include <atomic>
