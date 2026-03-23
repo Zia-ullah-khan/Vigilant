@@ -21,6 +21,7 @@ public:
 
 private:
     void HandleRequest(const httplib::Request& req, httplib::Response& res);
+    void HandleWebSocket(const httplib::Request& req, httplib::ws::WebSocket& client_ws);
     std::string ExtractDomain(const httplib::Request& req);
     bool CheckRateLimit(const std::string& ip, int limit);
 

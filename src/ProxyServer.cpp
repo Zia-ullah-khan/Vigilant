@@ -188,31 +188,34 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
     forwardHeaders.emplace("X-Forwarded-For", req.remote_addr);
     forwardHeaders.emplace("X-Forwarded-Host", domain);
 
+    // Preserve query strings by forwarding the full request target when available.
+    const std::string& backendTarget = req.target.empty() ? req.path : req.target;
+
     httplib::Result result = httplib::Result(nullptr, httplib::Error::Unknown);
 
     if (req.method == "GET")
     {
-        result = client.Get(req.path, forwardHeaders);
+        result = client.Get(backendTarget, forwardHeaders);
     }
     else if (req.method == "POST")
     {
-        result = client.Post(req.path, forwardHeaders, req.body, req.get_header_value("Content-Type"));
+        result = client.Post(backendTarget, forwardHeaders, req.body, req.get_header_value("Content-Type"));
     }
     else if (req.method == "PUT")
     {
-        result = client.Put(req.path, forwardHeaders, req.body, req.get_header_value("Content-Type"));
+        result = client.Put(backendTarget, forwardHeaders, req.body, req.get_header_value("Content-Type"));
     }
     else if (req.method == "DELETE")
     {
-        result = client.Delete(req.path, forwardHeaders);
+        result = client.Delete(backendTarget, forwardHeaders);
     }
     else if (req.method == "PATCH")
     {
-        result = client.Patch(req.path, forwardHeaders, req.body, req.get_header_value("Content-Type"));
+        result = client.Patch(backendTarget, forwardHeaders, req.body, req.get_header_value("Content-Type"));
     }
     else if (req.method == "OPTIONS")
     {
-        result = client.Options(req.path, forwardHeaders);
+        result = client.Options(backendTarget, forwardHeaders);
     }
     else
     {
@@ -247,11 +250,117 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
     res.set_content(result->body, result->get_header_value("Content-Type"));
 }
 
+void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebSocket& client_ws)
+{
+    std::string domain = ExtractDomain(req);
+    if (domain.empty()) {
+        client_ws.close(httplib::ws::CloseStatus::PolicyViolation, "missing host header");
+        return;
+    }
+
+    ServiceState* state = _manager.FindByDomain(domain);
+    if (!state) {
+        client_ws.close(httplib::ws::CloseStatus::PolicyViolation, "unknown service");
+        return;
+    }
+
+    std::string ip = req.get_header_value("X-Forwarded-For");
+    if (ip.empty()) ip = req.get_header_value("X-Real-IP");
+    if (ip.empty()) ip = req.remote_addr;
+
+    if (!CheckRateLimit(ip + ":" + domain, state->config.rateLimit)) {
+        client_ws.close(httplib::ws::CloseStatus::PolicyViolation, "rate limit exceeded");
+        return;
+    }
+
+    if (!state->awake) {
+        if (!_manager.WakeService(state->config.name)) {
+            client_ws.close(httplib::ws::CloseStatus::InternalError, "service failed to start");
+            return;
+        }
+    }
+    _manager.TouchService(state->config.name);
+
+    httplib::Headers forwardHeaders;
+    for (const auto& [key, value] : req.headers) {
+        std::string lower = key;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        if (lower == "host" || lower == "connection" || lower == "upgrade" ||
+            lower == "sec-websocket-key" || lower == "sec-websocket-version" ||
+            lower == "sec-websocket-extensions" || lower == "sec-websocket-accept") {
+            continue;
+        }
+        forwardHeaders.emplace(key, value);
+    }
+    forwardHeaders.emplace("X-Forwarded-For", req.remote_addr);
+    forwardHeaders.emplace("X-Forwarded-Host", domain);
+
+    const std::string& backendTarget = req.target.empty() ? req.path : req.target;
+    std::string backendUrl = "ws://localhost:" + std::to_string(state->config.port) + backendTarget;
+
+    Logger::Info("[PROXY-WS] Upgrading " + domain + req.path + " -> " + backendUrl);
+
+    auto wsClient = std::make_shared<httplib::ws::WebSocketClient>(backendUrl, forwardHeaders);
+    wsClient->set_read_timeout(0, 0);
+    
+    if (!wsClient->connect()) {
+        Logger::Error("[PROXY-WS] Backend WebSocket offline for " + domain);
+        client_ws.close(httplib::ws::CloseStatus::InternalError, "backend unreachable");
+        return;
+    }
+
+    std::atomic<bool> active{true};
+
+    std::thread backendToFrontend([wsClient, &client_ws, &active]() {
+        std::string msg;
+        while (active) {
+            auto res = wsClient->read(msg);
+            if (res == httplib::ws::ReadResult::Text) {
+                if (!client_ws.send(msg)) break;
+            } else if (res == httplib::ws::ReadResult::Binary) {
+                if (!client_ws.send(msg.data(), msg.size())) break;
+            } else {
+                break;
+            }
+            msg.clear();
+        }
+        active = false;
+        client_ws.close();
+    });
+
+    std::string msg;
+    while (active) {
+        auto res = client_ws.read(msg);
+        if (res == httplib::ws::ReadResult::Text) {
+            if (!wsClient->send(msg)) break;
+        } else if (res == httplib::ws::ReadResult::Binary) {
+            if (!wsClient->send(msg.data(), msg.size())) break;
+        } else {
+            break;
+        }
+        msg.clear();
+    }
+    
+    active = false;
+    wsClient->close(httplib::ws::CloseStatus::Normal, "proxy closing");
+
+    if (backendToFrontend.joinable()) {
+        backendToFrontend.join();
+    }
+    
+    Logger::Info("[PROXY-WS] Closed connection for " + domain + req.path);
+}
+
 void ProxyServer::Start()
 {
     _server->Get(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
+    });
+
+    _server->WebSocket(".*", [this](const httplib::Request& req, httplib::ws::WebSocket& ws)
+    {
+        HandleWebSocket(req, ws);
     });
 
     _server->Post(".*", [this](const httplib::Request& req, httplib::Response& res)
