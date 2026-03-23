@@ -8,3 +8,5 @@ command = cd /home/pi/Desktop/Projects/24Control/backend && node server.js
 pidfile = /tmp/24control.pid
 health = /
 timeout = 30
+cert = /etc/letsencrypt/live/24controlapi.rfas.software/fullchain.pem
+key = /etc/letsencrypt/live/24controlapi.rfas.software/privkey.pem

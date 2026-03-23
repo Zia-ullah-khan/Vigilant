@@ -117,6 +117,21 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (certFile.empty() && keyFile.empty())
+    {
+        for (const auto& svc : services)
+        {
+            if (!svc.cert.empty() && !svc.key.empty())
+            {
+                certFile = svc.cert;
+                keyFile = svc.key;
+                Logger::Info("Using SSL Certificate from service " + svc.name + ": " + certFile);
+                Logger::Info("Using SSL Key from service " + svc.name + ": " + keyFile);
+                break;
+            }
+        }
+    }
+
     ServiceManager manager(sleepTimeoutMin); // Restored constructor argument
     for (const auto& svc : services) // Changed s to svc
     {

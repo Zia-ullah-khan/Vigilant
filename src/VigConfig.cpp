@@ -100,6 +100,9 @@ VigService ParseVigFile(const std::string& path)
     svc.timeout = std::stoi(optional("timeout", "30"));
     svc.rateLimit = std::stoi(optional("ratelimit", "0"));
 
+    svc.cert = optional("cert", "");
+    svc.key = optional("key", "");
+
     return svc;
 }
 

@@ -29,6 +29,10 @@ struct VigService
     std::string healthPath = "/";
     int timeout = 30;
 
+    // SSL
+    std::string cert;
+    std::string key;
+
     // Features
     int rateLimit = 0; // Requests per minute, 0 = unlimited
 };
