@@ -1,0 +1,10 @@
+# RoboTrader service definition
+
+name = robotrader
+domain = robotrader.rfas.software
+port = 8083
+type = docker
+image = robotrader:latest
+container = robotrader-container
+health = /ping
+timeout = 30

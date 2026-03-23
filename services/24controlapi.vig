@@ -1,0 +1,11 @@
+# 24Control API service definition
+# Example of a process-based service (not Docker)
+
+name = 24controlapi
+domain = 24controlapi.rfas.software
+port = 8082
+type = process
+command = python3 /opt/24control/api.py
+pidfile = /var/run/24controlapi.pid
+health = /api/health
+timeout = 15

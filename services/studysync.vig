@@ -1,0 +1,11 @@
+# StudySync service definition
+# Place in /etc/vigilant/services/ (or wherever Vigilant is configured to look)
+
+name = studysync
+domain = studysync.rfas.software
+port = 8081
+type = docker
+image = studysync:latest
+container = studysync-container
+health = /health
+timeout = 30
