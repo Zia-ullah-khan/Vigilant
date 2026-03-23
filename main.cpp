@@ -37,9 +37,11 @@ int main(int argc, char* argv[])
 {
     std::string configDir = "/etc/vigilant/services";
     int listenPort = 9000;
-    int sleepTimeoutMin = 10; // Renamed from sleepMinutes
-    std::string logFile = "/var/log/vigilant.log"; // Added logFile
+    int sleepTimeoutMin = 10;
+    std::string logFile = "/var/log/vigilant.log";
     int dashPort = 9001;
+    std::string certFile = "";
+    std::string keyFile = "";
 
     for (int i = 1; i < argc; ++i)
     {
@@ -65,9 +67,17 @@ int main(int argc, char* argv[])
         {
             dashPort = std::stoi(argv[++i]);
         }
+        else if (arg == "--cert" && i + 1 < argc)
+        {
+            certFile = argv[++i];
+        }
+        else if (arg == "--key" && i + 1 < argc)
+        {
+            keyFile = argv[++i];
+        }
         else if (arg == "-h" || arg == "--help")
         {
-            Logger::Info("Usage: " + std::string(argv[0]) + " [-d <dir>] [-p <port>] [-t <minutes>] [-l <filepath>] [-dash <port>] [-h|--help]");
+            Logger::Info("Usage: " + std::string(argv[0]) + " [-d <dir>] [-p <port>] [-t <minutes>] [-l <filepath>] [-dash <port>] [--cert <filepath>] [--key <filepath>] [-h|--help]");
             return 0;
         }
         else // Added handling for unknown arguments
@@ -83,6 +93,10 @@ int main(int argc, char* argv[])
     Logger::Info("Config directory: " + configDir); // Substituted cout
     Logger::Info("Listen port: " + std::to_string(listenPort));
     Logger::Info("Dashboard port: " + std::to_string(dashPort));
+    if (!certFile.empty() && !keyFile.empty()) {
+        Logger::Info("SSL Certificate: " + certFile);
+        Logger::Info("SSL Key: " + keyFile);
+    }
     Logger::Info("Sleep timeout: " + std::to_string(sleepTimeoutMin) + " min");
     Logger::Info("Log file: " + logFile);
 
@@ -116,8 +130,8 @@ int main(int argc, char* argv[])
     g_dash = &dashServer;
     dashServer.Start();
 
-    ProxyServer server(listenPort, manager);
-    g_server = &server; // Corrected assignment to g_server
+    ProxyServer server(listenPort, manager, certFile, keyFile);
+    g_server = &server;
 
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler); // Used std::signal

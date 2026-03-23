@@ -6,10 +6,26 @@
 #include <sstream>
 #include <chrono>
 
-ProxyServer::ProxyServer(int listenPort, ServiceManager& manager)
+ProxyServer::ProxyServer(int listenPort, ServiceManager& manager, const std::string& certPath, const std::string& keyPath)
     : _listenPort(listenPort)
     , _manager(manager)
 {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+    if (!certPath.empty() && !keyPath.empty()) {
+        Logger::Info("HTTPS Enabled: Binding Native SSL Responder");
+        _server = std::make_unique<httplib::SSLServer>(certPath.c_str(), keyPath.c_str());
+        if (!_server->is_valid()) {
+            Logger::Error("Failed to initialize SSL Server! Please verify your certificate and key files exist and correspond.");
+            exit(1);
+        }
+        return;
+    }
+#else
+    if (!certPath.empty() || !keyPath.empty()) {
+        Logger::Error("Vigilant was compiled without OpenSSL! Ignoring --cert and --key flags. Falling back to HTTP.");
+    }
+#endif
+    _server = std::make_unique<httplib::Server>();
 }
 
 std::string ProxyServer::ExtractDomain(const httplib::Request& req)
@@ -81,6 +97,29 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
 {
     RequestLogger logger(req, res);
     
+    std::string acmePrefix = "/.well-known/acme-challenge/";
+    if (req.path.rfind(acmePrefix, 0) == 0)
+    {
+        std::string filename = req.path.substr(acmePrefix.length());
+        std::string filepath = "/var/www/html/.well-known/acme-challenge/" + filename;
+        
+        std::ifstream acmeFile(filepath, std::ios::binary);
+        if (acmeFile.is_open())
+        {
+            std::stringstream buffer;
+            buffer << acmeFile.rdbuf();
+            res.set_content(buffer.str(), "text/plain");
+            res.status = 200;
+            Logger::Info("[ACME] Let's Encrypt validation served: " + filename);
+        }
+        else
+        {
+            res.status = 404;
+            Logger::Error("[ACME] Failed to find validation file: " + filepath);
+        }
+        return;
+    }
+
     std::string domain = ExtractDomain(req);
     logger.domain = domain;
 
@@ -210,41 +249,41 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
 
 void ProxyServer::Start()
 {
-    _server.Get(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Get(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    _server.Post(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Post(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    _server.Put(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Put(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    _server.Delete(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Delete(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    _server.Patch(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Patch(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    _server.Options(".*", [this](const httplib::Request& req, httplib::Response& res)
+    _server->Options(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
     });
 
-    Logger::Info("Vigilant listening on 0.0.0.0:" + std::to_string(_listenPort));
-    _server.listen("0.0.0.0", _listenPort);
+    Logger::Info("Vigilant proxy bound to 0.0.0.0:" + std::to_string(_listenPort));
+    _server->listen("0.0.0.0", _listenPort);
 }
 
 void ProxyServer::Stop()
 {
-    _server.stop();
+    if (_server) _server->stop();
 }

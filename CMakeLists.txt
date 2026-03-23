@@ -17,10 +17,24 @@ add_executable(vigilant
 )
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL)
 target_link_libraries(vigilant PRIVATE Threads::Threads)
+
+if(OPENSSL_FOUND)
+    message(STATUS "OpenSSL found -> Enabling Native HTTPS features.")
+    target_compile_definitions(vigilant PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    target_link_libraries(vigilant PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+else()
+    message(WARNING "OpenSSL missing -> Native HTTPS capabilities will be disabled.")
+endif()
 
 add_executable(vigilant_tests
     tests/test_traffic.cpp
 )
 target_include_directories(vigilant_tests PRIVATE include)
 target_link_libraries(vigilant_tests PRIVATE Threads::Threads)
+
+if(OPENSSL_FOUND)
+    target_compile_definitions(vigilant_tests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    target_link_libraries(vigilant_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()

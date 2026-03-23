@@ -9,11 +9,12 @@
 #include <deque>
 #include <chrono>
 #include <mutex>
+#include <memory>
 
 class ProxyServer
 {
 public:
-    ProxyServer(int listenPort, ServiceManager& manager);
+    ProxyServer(int listenPort, ServiceManager& manager, const std::string& certPath = "", const std::string& keyPath = "");
 
     void Start();
     void Stop();
@@ -25,7 +26,7 @@ private:
 
     int _listenPort;
     ServiceManager& _manager;
-    httplib::Server _server;
+    std::unique_ptr<httplib::Server> _server;
 
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> _rateLimits;
     std::mutex _rateMutex;
