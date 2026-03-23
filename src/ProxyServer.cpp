@@ -286,6 +286,7 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
         std::string lower = key;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
         if (lower == "host" || lower == "connection" || lower == "upgrade" ||
+            lower == "origin" || /* remove origin to bypass nodejs Socket.IO CORS proxy mismatch */
             lower == "sec-websocket-key" || lower == "sec-websocket-version" ||
             lower == "sec-websocket-extensions" || lower == "sec-websocket-accept") {
             continue;
