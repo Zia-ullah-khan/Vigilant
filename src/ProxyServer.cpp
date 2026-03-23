@@ -59,7 +59,8 @@ ProxyServer::ProxyServer(int listenPort, ServiceManager& manager, const std::uno
             exit(1);
         }
         
-        SSL_CTX_set_tlsext_servername_callback(_server->ssl_context(), SniCallback);
+        auto ssl_server = static_cast<httplib::SSLServer*>(_server.get());
+        SSL_CTX_set_tlsext_servername_callback(ssl_server->ssl_context(), SniCallback);
         return;
     }
 #else
