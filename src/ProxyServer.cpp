@@ -1,5 +1,6 @@
 #include "../include/ProxyServer.h"
 #include "../include/Logger.h"
+#include "../include/StatsManager.h"
 
 #include <iostream>
 #include <sstream>
@@ -69,6 +70,10 @@ struct RequestLogger {
         auto end = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         Logger::Info("[PROXY] " + req.method + " " + (domain.empty() ? "*" : domain) + req.path + " -> " + std::to_string(res.status) + " (" + std::to_string(elapsed) + "ms)");
+        
+        StatsManager::Instance().RecordRequest(req.method, domain, req.path, res.status, elapsed);
+        if (res.status == 429) StatsManager::Instance().RecordBlock();
+        if (!res.body.empty()) StatsManager::Instance().RecordBytes(res.body.size());
     }
 };
 

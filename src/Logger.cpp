@@ -1,4 +1,5 @@
 #include "../include/Logger.h"
+#include "../include/StatsManager.h"
 
 #include <iostream>
 #include <fstream>
@@ -37,6 +38,7 @@ void Logger::Info(const std::string& msg)
         g_file << line << std::endl;
         g_file.flush();
     }
+    StatsManager::Instance().RecordLog("INFO", msg);
 }
 
 void Logger::Warn(const std::string& msg)
@@ -49,6 +51,8 @@ void Logger::Warn(const std::string& msg)
         g_file << line << std::endl;
         g_file.flush();
     }
+
+    StatsManager::Instance().RecordLog("WARN", msg);
 }
 
 void Logger::Error(const std::string& msg)
@@ -61,4 +65,5 @@ void Logger::Error(const std::string& msg)
         g_file << line << std::endl;
         g_file.flush();
     }
+    StatsManager::Instance().RecordLog("ERROR", msg);
 }

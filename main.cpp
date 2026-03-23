@@ -2,12 +2,14 @@
 #include "include/ServiceManager.h"
 #include "include/ProxyServer.h"
 #include "include/Logger.h"
+#include "include/DashboardServer.h"
 
 #include <iostream>
 #include <csignal>
 #include <string>
 
 static ProxyServer* g_server = nullptr;
+static DashboardServer* g_dash = nullptr;
 
 static void SignalHandler(int sig)
 {
@@ -15,6 +17,10 @@ static void SignalHandler(int sig)
     if (g_server)
     {
         g_server->Stop();
+    }
+    if (g_dash)
+    {
+        g_dash->Stop();
     }
 }
 
@@ -33,8 +39,9 @@ int main(int argc, char* argv[])
     int listenPort = 9000;
     int sleepTimeoutMin = 10; // Renamed from sleepMinutes
     std::string logFile = "/var/log/vigilant.log"; // Added logFile
+    int dashPort = 9001;
 
-    for (int i = 1; i < argc; ++i) // Changed i++ to ++i
+    for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
 
@@ -54,10 +61,13 @@ int main(int argc, char* argv[])
         {
             logFile = argv[++i];
         }
+        else if (arg == "-dash" && i + 1 < argc)
+        {
+            dashPort = std::stoi(argv[++i]);
+        }
         else if (arg == "-h" || arg == "--help")
         {
-            // Replaced PrintUsage call with Logger::Info
-            Logger::Info("Usage: " + std::string(argv[0]) + " [-d <dir>] [-p <port>] [-t <minutes>] [-l <filepath>] [-h|--help]");
+            Logger::Info("Usage: " + std::string(argv[0]) + " [-d <dir>] [-p <port>] [-t <minutes>] [-l <filepath>] [-dash <port>] [-h|--help]");
             return 0;
         }
         else // Added handling for unknown arguments
@@ -71,9 +81,10 @@ int main(int argc, char* argv[])
     Logger::Init(logFile); // Initialize Logger
     Logger::Info("--- Vigilant v2.0 ---"); // Substituted cout
     Logger::Info("Config directory: " + configDir); // Substituted cout
-    Logger::Info("Listen port: " + std::to_string(listenPort)); // Substituted cout
-    Logger::Info("Sleep timeout: " + std::to_string(sleepTimeoutMin) + " min"); // Substituted cout
-    Logger::Info("Log file: " + logFile); // Added log file info
+    Logger::Info("Listen port: " + std::to_string(listenPort));
+    Logger::Info("Dashboard port: " + std::to_string(dashPort));
+    Logger::Info("Sleep timeout: " + std::to_string(sleepTimeoutMin) + " min");
+    Logger::Info("Log file: " + logFile);
 
     std::vector<VigService> services;
     try
@@ -101,10 +112,14 @@ int main(int argc, char* argv[])
 
     manager.StartReaper(); // Removed timeout argument
 
+    DashboardServer dashServer(dashPort);
+    g_dash = &dashServer;
+    dashServer.Start();
+
     ProxyServer server(listenPort, manager);
     g_server = &server; // Corrected assignment to g_server
 
-    std::signal(SIGINT, SignalHandler); // Used std::signal
+    std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler); // Used std::signal
 
     Logger::Info("Starting proxy server..."); // Added logging

@@ -12,6 +12,8 @@ add_executable(vigilant
     src/ServiceManager.cpp
     src/ProxyServer.cpp
     src/Logger.cpp
+    src/StatsManager.cpp
+    src/DashboardServer.cpp
 )
 
 find_package(Threads REQUIRED)
