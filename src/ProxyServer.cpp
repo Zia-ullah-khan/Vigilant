@@ -2,27 +2,69 @@
 #include "../include/Logger.h"
 #include "../include/StatsManager.h"
 
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+static std::unordered_map<std::string, SSL_CTX*> g_sni_contexts;
+
+static int SniCallback(SSL* ssl, int* ad, void* arg) {
+    if (ssl == nullptr) return SSL_TLSEXT_ERR_NOACK;
+    const char* servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    if (servername && servername[0]) {
+        auto it = g_sni_contexts.find(servername);
+        if (it != g_sni_contexts.end()) {
+            SSL_set_SSL_CTX(ssl, it->second);
+            return SSL_TLSEXT_ERR_OK;
+        }
+    }
+    return SSL_TLSEXT_ERR_NOACK;
+}
+#endif
+
 #include <iostream>
 #include <sstream>
 #include <chrono>
 
-ProxyServer::ProxyServer(int listenPort, ServiceManager& manager, const std::string& certPath, const std::string& keyPath)
+ProxyServer::ProxyServer(int listenPort, ServiceManager& manager, const std::unordered_map<std::string, std::pair<std::string, std::string>>& domainCerts)
     : _listenPort(listenPort)
     , _manager(manager)
 {
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-    if (!certPath.empty() && !keyPath.empty()) {
-        Logger::Info("HTTPS Enabled: Binding Native SSL Responder");
-        _server = std::make_unique<httplib::SSLServer>(certPath.c_str(), keyPath.c_str());
-        if (!_server->is_valid()) {
-            Logger::Error("Failed to initialize SSL Server! Please verify your certificate and key files exist and correspond.");
+    if (!domainCerts.empty()) {
+        Logger::Info("HTTPS Enabled: Binding Native SSL Responder with SNI support");
+        
+        for (const auto& [domain, certs] : domainCerts) {
+            SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+            if (SSL_CTX_use_certificate_chain_file(ctx, certs.first.c_str()) <= 0 ||
+                SSL_CTX_use_PrivateKey_file(ctx, certs.second.c_str(), SSL_FILETYPE_PEM) <= 0) {
+                Logger::Error("Failed to load certs for domain: " + domain);
+                SSL_CTX_free(ctx);
+                continue;
+            }
+            g_sni_contexts[domain] = ctx;
+            Logger::Info("Loaded SSL cert for domain: " + domain);
+        }
+
+        if (g_sni_contexts.empty()) {
+            Logger::Error("Failed to load any valid certificates!");
             exit(1);
         }
+
+        auto firstDomain = domainCerts.begin();
+        _server = std::make_unique<httplib::SSLServer>(firstDomain->second.first.c_str(), firstDomain->second.second.c_str());
+        
+        if (!_server->is_valid()) {
+            Logger::Error("Failed to initialize default SSL Server!");
+            exit(1);
+        }
+        
+        SSL_CTX_set_tlsext_servername_callback(_server->ssl_context(), SniCallback);
         return;
     }
 #else
-    if (!certPath.empty() || !keyPath.empty()) {
-        Logger::Error("Vigilant was compiled without OpenSSL! Ignoring --cert and --key flags. Falling back to HTTP.");
+    if (!domainCerts.empty()) {
+        Logger::Error("Vigilant was compiled without OpenSSL! Ignoring SSL bindings. Falling back to HTTP.");
     }
 #endif
     _server = std::make_unique<httplib::Server>();

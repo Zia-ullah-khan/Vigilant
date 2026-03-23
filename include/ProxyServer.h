@@ -14,7 +14,7 @@
 class ProxyServer
 {
 public:
-    ProxyServer(int listenPort, ServiceManager& manager, const std::string& certPath = "", const std::string& keyPath = "");
+    ProxyServer(int listenPort, ServiceManager& manager, const std::unordered_map<std::string, std::pair<std::string, std::string>>& domainCerts);
 
     void Start();
     void Stop();

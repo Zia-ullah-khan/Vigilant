@@ -117,58 +117,34 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (certFile.empty() && keyFile.empty())
-    {
-        for (const auto& svc : services)
-        {
-            if (!svc.cert.empty() && !svc.key.empty())
-            {
-                // add support for mulitpleservices with different cert each cert shjould be served for thier correct service
-                certFile = svc.cert;
-                keyFile = svc.key;
+    std::unordered_map<std::string, std::pair<std::string, std::string>> domainCerts;
+    
+    if (!certFile.empty() && !keyFile.empty()) {
+        domainCerts["default"] = {certFile, keyFile};
+        Logger::Info("Loaded global CLI certificate.");
+    }
 
-                if (services.size() > 1)
-                {
-                    for (int i = 0; i < services.size(); i++)
-                    {
-                        if (services[i].cert.empty() || services[i].key.empty())
-                        {
-                            Logger::Error("SSL Certificate or Key not found for service " + services[i].name);
-                            return 1;
-                        }
-                        certFile += "," + services[i].cert;
-                        keyFile += "," + services[i].key;
-                    }
-                }
-
-                // TODO: Add support for multiple services with different certificates
-                if (!certFile.empty() && !keyFile.empty()) {
-                    Logger::Info("Using SSL Certificate from service " + svc.name + ": " + certFile);
-                    Logger::Info("Using SSL Key from service " + svc.name + ": " + keyFile);
-                } else {
-                    Logger::Error("SSL Certificate or Key not found for service " + svc.name);
-                }
-
-
-                break;
-            }
+    for (const auto& svc : services) {
+        if (!svc.cert.empty() && !svc.key.empty()) {
+            domainCerts[svc.domain] = {svc.cert, svc.key};
+            Logger::Info("Registered SNI certificate for " + svc.domain);
         }
     }
 
-    ServiceManager manager(sleepTimeoutMin); // Restored constructor argument
-    for (const auto& svc : services) // Changed s to svc
+    ServiceManager manager(sleepTimeoutMin);
+    for (const auto& svc : services)
     {
         manager.Register(svc);
-        Logger::Info("Registered service: " + svc.name + " (" + svc.domain + " -> localhost:" + std::to_string(svc.port) + ")"); // Added logging for registered services
+        Logger::Info("Registered service: " + svc.name + " (" + svc.domain + " -> localhost:" + std::to_string(svc.port) + ")");
     }
 
-    manager.StartReaper(); // Removed timeout argument
+    manager.StartReaper();
 
     DashboardServer dashServer(dashPort);
     g_dash = &dashServer;
     dashServer.Start();
 
-    ProxyServer server(listenPort, manager, certFile, keyFile);
+    ProxyServer server(listenPort, manager, domainCerts);
     g_server = &server;
 
     std::signal(SIGINT, SignalHandler);
