@@ -60,7 +60,12 @@ ProxyServer::ProxyServer(int listenPort, ServiceManager& manager, const std::uno
         }
         
         auto ssl_server = static_cast<httplib::SSLServer*>(_server.get());
-        SSL_CTX_set_tlsext_servername_callback(ssl_server->tls_context(), SniCallback);
+        
+        // Because different versions of httplib return either SSL_CTX* or void* from their API,
+        // we use an explicit cast to guarantee it drops cleanly into the OpenSSL C API.
+        SSL_CTX* ctx = reinterpret_cast<SSL_CTX*>(ssl_server->tls_context());
+        SSL_CTX_set_tlsext_servername_callback(ctx, SniCallback);
+        
         return;
     }
 #else
