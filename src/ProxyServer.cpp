@@ -302,7 +302,7 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
     Logger::Info("[PROXY-WS] Upgrading " + domain + req.path + " -> " + backendUrl);
 
     auto wsClient = std::make_shared<httplib::ws::WebSocketClient>(backendUrl, forwardHeaders);
-    wsClient->set_read_timeout(0, 0);
+    wsClient->set_read_timeout(300, 0); // 5 minutes (Socket.io pings every 25s)
     
     if (!wsClient->connect()) {
         Logger::Error("[PROXY-WS] Backend WebSocket offline for " + domain);
@@ -360,6 +360,9 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
 
 void ProxyServer::Start()
 {
+    _server->set_read_timeout(300, 0); // 5 minutes globally for long WebSocket streams
+    _server->set_write_timeout(300, 0);
+
     _server->Get(".*", [this](const httplib::Request& req, httplib::Response& res)
     {
         HandleRequest(req, res);
