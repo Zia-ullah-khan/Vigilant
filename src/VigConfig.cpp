@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <filesystem>
-#include <iostream>
+#include "../include/Logger.h"
 
 namespace fs = std::filesystem;
 
@@ -98,6 +98,7 @@ VigService ParseVigFile(const std::string& path)
 
     svc.healthPath = optional("health", "/");
     svc.timeout = std::stoi(optional("timeout", "30"));
+    svc.rateLimit = std::stoi(optional("ratelimit", "0"));
 
     return svc;
 }
@@ -115,14 +116,14 @@ std::vector<VigService> LoadAllServices(const std::string& directory)
     {
         if (entry.path().extension() == ".vig")
         {
-            std::cout << "Loading service: " << entry.path().string() << std::endl;
+            Logger::Info("Loading service config: " + entry.path().string());
             services.push_back(ParseVigFile(entry.path().string()));
         }
     }
 
     if (services.empty())
     {
-        std::cout << "Warning: no .vig files found in " << directory << std::endl;
+        Logger::Info("Warning: no .vig files found in " + directory);
     }
 
     return services;

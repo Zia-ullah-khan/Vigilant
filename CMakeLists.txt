@@ -11,6 +11,7 @@ add_executable(vigilant
     src/VigConfig.cpp
     src/ServiceManager.cpp
     src/ProxyServer.cpp
+    src/Logger.cpp
 )
 
 target_link_libraries(vigilant PRIVATE pthread)

@@ -28,6 +28,9 @@ struct VigService
     // Health check
     std::string healthPath = "/";
     int timeout = 30;
+
+    // Features
+    int rateLimit = 0; // Requests per minute, 0 = unlimited
 };
 
 VigService ParseVigFile(const std::string& path);

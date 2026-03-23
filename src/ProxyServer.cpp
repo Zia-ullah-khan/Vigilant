@@ -1,4 +1,5 @@
 #include "../include/ProxyServer.h"
+#include "../include/Logger.h"
 
 #include <iostream>
 #include <sstream>
@@ -33,6 +34,28 @@ std::string ProxyServer::ExtractDomain(const httplib::Request& req)
     return "";
 }
 
+bool ProxyServer::CheckRateLimit(const std::string& ip, int limit)
+{
+    if (limit <= 0) return true;
+
+    std::lock_guard<std::mutex> lock(_rateMutex);
+    auto& history = _rateLimits[ip];
+    auto now = std::chrono::steady_clock::now();
+
+    while (!history.empty() && std::chrono::duration_cast<std::chrono::seconds>(now - history.front()).count() > 60)
+    {
+        history.pop_front();
+    }
+
+    if (history.size() >= limit)
+    {
+        return false;
+    }
+
+    history.push_back(now);
+    return true;
+}
+
 struct RequestLogger {
     const httplib::Request& req;
     httplib::Response& res;
@@ -45,9 +68,7 @@ struct RequestLogger {
     ~RequestLogger() {
         auto end = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        std::cout << "[PROXY] " << req.method << " " 
-                  << (domain.empty() ? "*" : domain) << req.path 
-                  << " -> " << res.status << " (" << elapsed << "ms)" << std::endl;
+        Logger::Info("[PROXY] " + req.method + " " + (domain.empty() ? "*" : domain) + req.path + " -> " + std::to_string(res.status) + " (" + std::to_string(elapsed) + "ms)");
     }
 };
 
@@ -74,9 +95,21 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
         return;
     }
 
+    std::string ip = req.get_header_value("X-Forwarded-For");
+    if (ip.empty()) ip = req.get_header_value("X-Real-IP");
+    if (ip.empty()) ip = req.remote_addr;
+
+    if (!CheckRateLimit(ip + ":" + domain, state->config.rateLimit))
+    {
+        Logger::Info("Rate limit exceeded for " + ip + " on " + domain);
+        res.status = 429;
+        res.set_content(R"({"error":"Too Many Requests"})", "application/json");
+        return;
+    }
+
     if (!state->awake)
     {
-        std::cout << "Request for sleeping service: " << state->config.name << std::endl;
+        Logger::Info("Request for sleeping service: " + state->config.name);
 
         if (!_manager.WakeService(state->config.name))
         {
@@ -202,7 +235,7 @@ void ProxyServer::Start()
         HandleRequest(req, res);
     });
 
-    std::cout << "Vigilant listening on 0.0.0.0:" << _listenPort << std::endl;
+    Logger::Info("Vigilant listening on 0.0.0.0:" + std::to_string(_listenPort));
     _server.listen("0.0.0.0", _listenPort);
 }
 

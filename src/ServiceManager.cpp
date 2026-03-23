@@ -1,4 +1,5 @@
 #include "../include/ServiceManager.h"
+#include "../include/Logger.h"
 #include "../include/httplib.h"
 
 #include <iostream>
@@ -110,7 +111,7 @@ bool ServiceManager::WakeService(const std::string& name)
         return true;
     }
 
-    std::cout << "Waking service: " << name << std::endl;
+    Logger::Info("Waking service: " + name);
 
     bool started = false;
     if (state.config.type == ServiceType::Docker)
@@ -124,20 +125,20 @@ bool ServiceManager::WakeService(const std::string& name)
 
     if (!started)
     {
-        std::cerr << "Failed to start service: " << name << std::endl;
+        Logger::Error("Failed to start service: " + name);
         return false;
     }
 
     if (!HealthCheck(state))
     {
-        std::cerr << "Health check failed for: " << name << std::endl;
+        Logger::Error("Health check failed for: " + name);
         return false;
     }
 
     state.awake = true;
     state.lastActivity = std::chrono::steady_clock::now();
 
-    std::cout << "Service awake: " << name << std::endl;
+    Logger::Info("Service awake: " + name);
     return true;
 }
 
@@ -158,7 +159,7 @@ void ServiceManager::SleepService(const std::string& name)
         return;
     }
 
-    std::cout << "Sleeping service: " << name << std::endl;
+    Logger::Info("Sleeping service: " + name);
 
     if (state.config.type == ServiceType::Docker)
     {
@@ -170,7 +171,7 @@ void ServiceManager::SleepService(const std::string& name)
     }
 
     state.awake = false;
-    std::cout << "Service asleep: " << name << std::endl;
+    Logger::Info("Service asleep: " + name);
 }
 
 bool ServiceManager::IsAwake(const std::string& name)
@@ -207,39 +208,53 @@ bool ServiceManager::StartDocker(ServiceState& state)
 
     if (status.find("Up") != std::string::npos)
     {
+        Logger::Info("Docker container " + state.config.container + " is already running.");
         return true;
     }
 
     if (!status.empty())
     {
+        Logger::Info("Starting existing docker container: " + state.config.container);
         std::string startCmd = "docker start " + state.config.container;
         int ret = system(startCmd.c_str());
+        if (ret != 0) {
+            Logger::Error("Failed to start existing docker container: " + state.config.container);
+        }
         return (ret == 0);
     }
 
+    Logger::Info("Running new docker container: " + state.config.container + " from image: " + state.config.image);
     std::string runCmd = "docker run -d --name " + state.config.container
                        + " -p 127.0.0.1:" + std::to_string(state.config.port)
                        + ":" + std::to_string(state.config.port)
                        + " " + state.config.image;
     int ret = system(runCmd.c_str());
+    if (ret != 0) {
+        Logger::Error("Failed to run new docker container: " + state.config.container);
+    }
     return (ret == 0);
 }
 
 void ServiceManager::StopDocker(ServiceState& state)
 {
+    Logger::Info("Stopping docker container: " + state.config.container);
     std::string cmd = "docker stop " + state.config.container;
-    system(cmd.c_str());
+    int ret = system(cmd.c_str());
+    if (ret != 0) {
+        Logger::Error("Failed to stop docker container: " + state.config.container);
+    }
 }
 
 // --- Process lifecycle ---
 
 bool ServiceManager::StartProcess(ServiceState& state)
 {
+    Logger::Info("Starting process: " + state.config.command);
     pid_t pid = fork();
 
     if (pid < 0)
     {
-        std::cerr << "Fork failed for: " << state.config.name << std::endl;
+        Logger::Error("Fork failed for: " + state.config.name);
         return false;
     }
 
@@ -247,6 +262,8 @@ bool ServiceManager::StartProcess(ServiceState& state)
     {
         setsid();
         execl("/bin/sh", "sh", "-c", state.config.command.c_str(), nullptr);
+        // If execl returns, it means it failed
+        Logger::Error("Execl failed for: " + state.config.name);
         _exit(1);
     }
 
@@ -257,6 +274,9 @@ bool ServiceManager::StartProcess(ServiceState& state)
     {
         pidFile << pid;
         pidFile.close();
+        Logger::Info("Wrote PID " + std::to_string(pid) + " to " + state.config.pidFile);
+    } else {
+        Logger::Error("Failed to open PID file: " + state.config.pidFile);
     }
 
     return true;
@@ -264,8 +284,10 @@ bool ServiceManager::StartProcess(ServiceState& state)
 
 void ServiceManager::StopProcess(ServiceState& state)
 {
+    Logger::Info("Stopping process: " + state.config.name);
     if (state.pid > 0)
     {
+        Logger::Info("Sending SIGTERM to PID " + std::to_string(state.pid));
         kill(state.pid, SIGTERM);
 
         int retries = 10;
@@ -273,21 +295,29 @@ void ServiceManager::StopProcess(ServiceState& state)
         {
             int status;
             pid_t result = waitpid(state.pid, &status, WNOHANG);
-            if (result != 0)
+            if (result != 0) // Process has exited
             {
+                Logger::Info("Process " + std::to_string(state.pid) + " exited after SIGTERM.");
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
-        kill(state.pid, SIGKILL);
-        waitpid(state.pid, nullptr, WNOHANG);
+        if (retries <= 0) {
+            Logger::Warn("Process " + std::to_string(state.pid) + " did not exit after SIGTERM, sending SIGKILL.");
+            kill(state.pid, SIGKILL);
+            waitpid(state.pid, nullptr, WNOHANG); // Clean up zombie process
+        }
         state.pid = 0;
     }
 
     if (!state.config.pidFile.empty())
     {
-        std::remove(state.config.pidFile.c_str());
+        if (std::remove(state.config.pidFile.c_str()) == 0) {
+            Logger::Info("Removed PID file: " + state.config.pidFile);
+        } else {
+            Logger::Error("Failed to remove PID file: " + state.config.pidFile);
+        }
     }
 }
 
@@ -295,6 +325,7 @@ void ServiceManager::StopProcess(ServiceState& state)
 
 bool ServiceManager::HealthCheck(const ServiceState& state)
 {
+    Logger::Info("Performing health check for service: " + state.config.name + " at localhost:" + std::to_string(state.config.port) + state.config.healthPath);
     int elapsed = 0;
     int interval = 1;
 
@@ -309,17 +340,24 @@ bool ServiceManager::HealthCheck(const ServiceState& state)
             auto res = client.Get(state.config.healthPath);
             if (res && res->status >= 200 && res->status < 500)
             {
+                Logger::Info("Health check successful for: " + state.config.name);
                 return true;
             }
         }
+        catch (const std::exception& e)
+        {
+            Logger::Warn("Health check exception for " + state.config.name + ": " + e.what());
+        }
         catch (...)
         {
+            Logger::Warn("Health check unknown exception for " + state.config.name);
         }
 
         std::this_thread::sleep_for(std::chrono::seconds(interval));
         elapsed += interval;
     }
 
+    Logger::Error("Health check failed for: " + state.config.name + " after " + std::to_string(state.config.timeout) + " seconds.");
     return false;
 }
 
@@ -329,16 +367,18 @@ void ServiceManager::StartReaper()
 {
     _reaperRunning = true;
     _reaperThread = std::thread(&ServiceManager::ReaperLoop, this);
-    std::cout << "Reaper started (" << _sleepMinutes << " min timeout)" << std::endl;
+    Logger::Info("Reaper started (" + std::to_string(_sleepMinutes) + " min timeout)");
 }
 
 void ServiceManager::StopReaper()
 {
+    Logger::Info("Stopping reaper...");
     _reaperRunning = false;
     if (_reaperThread.joinable())
     {
         _reaperThread.join();
     }
+    Logger::Info("Reaper stopped.");
 }
 
 void ServiceManager::ReaperLoop()
@@ -370,6 +410,7 @@ void ServiceManager::ReaperLoop()
 
                 if (idle >= _sleepMinutes)
                 {
+                    Logger::Info("Service " + name + " idle for " + std::to_string(idle) + " minutes, marking for sleep.");
                     toSleep.push_back(name);
                 }
             }
