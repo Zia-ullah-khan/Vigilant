@@ -14,3 +14,8 @@ add_executable(vigilant
 )
 
 target_link_libraries(vigilant PRIVATE pthread)
+
+add_executable(vigilant_tests
+    tests/test_traffic.cpp
+)
+target_link_libraries(vigilant_tests PRIVATE pthread)
