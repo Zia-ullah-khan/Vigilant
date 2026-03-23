@@ -123,10 +123,33 @@ int main(int argc, char* argv[])
         {
             if (!svc.cert.empty() && !svc.key.empty())
             {
+                // add support for mulitpleservices with different cert each cert shjould be served for thier correct service
                 certFile = svc.cert;
                 keyFile = svc.key;
-                Logger::Info("Using SSL Certificate from service " + svc.name + ": " + certFile);
-                Logger::Info("Using SSL Key from service " + svc.name + ": " + keyFile);
+
+                if (services.size() > 1)
+                {
+                    for (int i = 0; i < services.size(); i++)
+                    {
+                        if (services[i].cert.empty() || services[i].key.empty())
+                        {
+                            Logger::Error("SSL Certificate or Key not found for service " + services[i].name);
+                            return 1;
+                        }
+                        certFile += "," + services[i].cert;
+                        keyFile += "," + services[i].key;
+                    }
+                }
+
+                // TODO: Add support for multiple services with different certificates
+                if (!certFile.empty() && !keyFile.empty()) {
+                    Logger::Info("Using SSL Certificate from service " + svc.name + ": " + certFile);
+                    Logger::Info("Using SSL Key from service " + svc.name + ": " + keyFile);
+                } else {
+                    Logger::Error("SSL Certificate or Key not found for service " + svc.name);
+                }
+
+
                 break;
             }
         }
