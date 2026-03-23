@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <chrono>
 
 ProxyServer::ProxyServer(int listenPort, ServiceManager& manager)
     : _listenPort(listenPort)
@@ -32,9 +33,30 @@ std::string ProxyServer::ExtractDomain(const httplib::Request& req)
     return "";
 }
 
+struct RequestLogger {
+    const httplib::Request& req;
+    httplib::Response& res;
+    std::string domain;
+    std::chrono::steady_clock::time_point start;
+
+    RequestLogger(const httplib::Request& r, httplib::Response& s) 
+        : req(r), res(s), start(std::chrono::steady_clock::now()) {}
+
+    ~RequestLogger() {
+        auto end = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        std::cout << "[PROXY] " << req.method << " " 
+                  << (domain.empty() ? "*" : domain) << req.path 
+                  << " -> " << res.status << " (" << elapsed << "ms)" << std::endl;
+    }
+};
+
 void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& res)
 {
+    RequestLogger logger(req, res);
+    
     std::string domain = ExtractDomain(req);
+    logger.domain = domain;
 
     if (domain.empty())
     {
