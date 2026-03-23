@@ -9,8 +9,10 @@
 #include <fstream>
 #include <array>
 #include <sstream>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #define popen _popen
@@ -22,7 +24,7 @@
 #endif
 inline int kill(pid_t, int) { return 0; }
 inline pid_t waitpid(pid_t, int*, int) { return -1; }
-inline pid_t fork() { return -1; }
+inline pid_t fork() { return 1; }
 inline void setsid() {}
 inline int execl(const char*, ...) { return -1; }
 inline void _exit(int status) { exit(status); }

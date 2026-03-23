@@ -14,9 +14,11 @@ add_executable(vigilant
     src/Logger.cpp
 )
 
-target_link_libraries(vigilant PRIVATE pthread)
+find_package(Threads REQUIRED)
+target_link_libraries(vigilant PRIVATE Threads::Threads)
 
 add_executable(vigilant_tests
     tests/test_traffic.cpp
 )
-target_link_libraries(vigilant_tests PRIVATE pthread)
+target_include_directories(vigilant_tests PRIVATE include)
+target_link_libraries(vigilant_tests PRIVATE Threads::Threads)
