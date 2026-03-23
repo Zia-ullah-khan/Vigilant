@@ -317,10 +317,13 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
         while (active) {
             auto res = wsClient->read(msg);
             if (res == httplib::ws::ReadResult::Text) {
+                Logger::Info("[PROXY-WS] B->F [Text] " + std::to_string(msg.size()) + "B: " + msg.substr(0, 50));
                 if (!client_ws.send(msg)) break;
             } else if (res == httplib::ws::ReadResult::Binary) {
+                Logger::Info("[PROXY-WS] B->F [Binary] " + std::to_string(msg.size()) + "B");
                 if (!client_ws.send(msg.data(), msg.size())) break;
             } else {
+                Logger::Info("[PROXY-WS] B->F Disconnected.");
                 break;
             }
             msg.clear();
@@ -333,10 +336,13 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
     while (active) {
         auto res = client_ws.read(msg);
         if (res == httplib::ws::ReadResult::Text) {
+            Logger::Info("[PROXY-WS] F->B [Text] " + std::to_string(msg.size()) + "B: " + msg.substr(0, 50));
             if (!wsClient->send(msg)) break;
         } else if (res == httplib::ws::ReadResult::Binary) {
+            Logger::Info("[PROXY-WS] F->B [Binary] " + std::to_string(msg.size()) + "B");
             if (!wsClient->send(msg.data(), msg.size())) break;
         } else {
+            Logger::Info("[PROXY-WS] F->B Disconnected.");
             break;
         }
         msg.clear();
