@@ -292,13 +292,18 @@ int main(int argc, char* argv[])
     });
 
     Logger::Info("Starting proxy server..."); // Added logging
-    server.Start();
+    const bool proxyStarted = server.Start();
 
     watcherRunning = false;
     if (configWatcher.joinable()) configWatcher.join();
 
+    if (!proxyStarted) {
+        Logger::Error("Vigilant shutting down due to proxy startup failure.");
+        dashServer.Stop();
+        return 1;
+    }
+
     Logger::Info("Vigilant shutting down."); // Added logging
-    manager.StopReaper();
 
     return 0;
 }

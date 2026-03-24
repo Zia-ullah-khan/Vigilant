@@ -423,7 +423,7 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
     Logger::Info("[PROXY-WS] Closed connection for " + domain + req.path);
 }
 
-void ProxyServer::Start()
+bool ProxyServer::Start()
 {
     _server->set_read_timeout(300, 0); // 5 minutes globally for long WebSocket streams
     _server->set_write_timeout(300, 0);
@@ -463,8 +463,18 @@ void ProxyServer::Start()
         HandleRequest(req, res);
     });
 
+    if (!_server->bind_to_port("0.0.0.0", _listenPort)) {
+        Logger::Error("Failed to bind proxy on 0.0.0.0:" + std::to_string(_listenPort) + ". Port may already be in use.");
+        return false;
+    }
+
     Logger::Info("Vigilant proxy bound to 0.0.0.0:" + std::to_string(_listenPort));
-    _server->listen("0.0.0.0", _listenPort);
+    if (!_server->listen_after_bind()) {
+        Logger::Error("Proxy server stopped unexpectedly on 0.0.0.0:" + std::to_string(_listenPort));
+        return false;
+    }
+
+    return true;
 }
 
 void ProxyServer::Stop()

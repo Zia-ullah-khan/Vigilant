@@ -23,8 +23,17 @@ void DashboardServer::Start()
 
     _running = true;
     _thread = std::thread([this]() {
+        if (!_server.bind_to_port("0.0.0.0", _port)) {
+            Logger::Error("Failed to bind dashboard on 0.0.0.0:" + std::to_string(_port) + ". Port may already be in use.");
+            _running = false;
+            return;
+        }
+
         Logger::Info("Dashboard listening on 0.0.0.0:" + std::to_string(_port));
-        _server.listen("0.0.0.0", _port);
+        if (!_server.listen_after_bind()) {
+            Logger::Warn("Dashboard server stopped on 0.0.0.0:" + std::to_string(_port));
+        }
+        _running = false;
     });
 }
 
