@@ -7,6 +7,13 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <cstdlib>
+#else
+#include <cstdlib>
+#include <unistd.h>
+#endif
+
 namespace {
 
 class ScopedStreamCapture {
@@ -44,6 +51,46 @@ std::filesystem::path CreateProcessVig(const std::filesystem::path& dir, const s
     return file;
 }
 
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const std::string& key, const std::string& value) : _key(key)
+    {
+        const char* existing = std::getenv(_key.c_str());
+        if (existing != nullptr) {
+            _hadOld = true;
+            _oldValue = existing;
+        }
+        Set(value);
+    }
+
+    ~ScopedEnvVar()
+    {
+        if (_hadOld) {
+            Set(_oldValue);
+        } else {
+#ifdef _WIN32
+            _putenv_s(_key.c_str(), "");
+#else
+            unsetenv(_key.c_str());
+#endif
+        }
+    }
+
+private:
+    void Set(const std::string& value)
+    {
+#ifdef _WIN32
+        _putenv_s(_key.c_str(), value.c_str());
+#else
+        setenv(_key.c_str(), value.c_str(), 1);
+#endif
+    }
+
+    std::string _key;
+    bool _hadOld = false;
+    std::string _oldValue;
+};
+
 } // namespace
 
 TEST_CASE("CLI Deploy copies .vig into config directory", "[cli]")
@@ -58,6 +105,35 @@ TEST_CASE("CLI Deploy copies .vig into config directory", "[cli]")
     const int rc = CLI::Deploy(sourceVig.string(), configDir.string());
     REQUIRE(rc == 0);
     REQUIRE(std::filesystem::exists(configDir / "alpha.vig"));
+
+    test_helpers::CleanupDir(root);
+}
+
+TEST_CASE("CLI Deploy falls back to user-local config directory when requested path is unusable", "[cli]")
+{
+    const auto root = test_helpers::MakeTempDir("cli_deploy_fallback");
+    const auto sourceDir = root / "src";
+    const auto fakeHome = root / "home";
+    const auto unusablePath = root / "blocked_config";
+    std::filesystem::create_directories(sourceDir);
+    std::filesystem::create_directories(fakeHome);
+
+    // A regular file at config path makes create_directories fail.
+    test_helpers::WriteFile(unusablePath, "not-a-directory\n");
+
+    const auto sourceVig = CreateProcessVig(sourceDir, "fallbacksvc");
+
+#ifdef _WIN32
+    ScopedEnvVar homeVar("USERPROFILE", fakeHome.string());
+#else
+    ScopedEnvVar homeVar("HOME", fakeHome.string());
+#endif
+
+    const int rc = CLI::Deploy(sourceVig.string(), unusablePath.string());
+    REQUIRE(rc == 0);
+
+    const auto expected = fakeHome / ".vigilant" / "services" / "fallbacksvc.vig";
+    REQUIRE(std::filesystem::exists(expected));
 
     test_helpers::CleanupDir(root);
 }

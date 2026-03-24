@@ -153,6 +153,74 @@ static std::string ExtractRepoName(const std::string& repoUrl)
     return SanitizeName(name);
 }
 
+static std::string GetHomeDirectory()
+{
+#ifdef _WIN32
+    const char* userProfile = std::getenv("USERPROFILE");
+    if (userProfile != nullptr) {
+        return std::string(userProfile);
+    }
+    const char* homeDrive = std::getenv("HOMEDRIVE");
+    const char* homePath = std::getenv("HOMEPATH");
+    if (homeDrive != nullptr && homePath != nullptr) {
+        return std::string(homeDrive) + std::string(homePath);
+    }
+#else
+    const char* home = std::getenv("HOME");
+    if (home != nullptr) {
+        return std::string(home);
+    }
+#endif
+    return "";
+}
+
+static bool EnsureDirectoryWritable(const fs::path& dir)
+{
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        return false;
+    }
+
+    const fs::path probe = dir / ".vigilant_write_probe";
+    std::ofstream out(probe, std::ios::trunc);
+    if (!out.is_open()) {
+        return false;
+    }
+    out << "ok";
+    out.close();
+
+    fs::remove(probe, ec);
+    return true;
+}
+
+static fs::path ResolveWritableConfigDir(const std::string& requestedDir)
+{
+    const fs::path requested(requestedDir);
+    if (EnsureDirectoryWritable(requested)) {
+        return requested;
+    }
+
+    const std::string home = GetHomeDirectory();
+    if (!home.empty()) {
+        const fs::path homeFallback = fs::path(home) / ".vigilant" / "services";
+        if (EnsureDirectoryWritable(homeFallback)) {
+            std::cout << "Config directory '" << requested.string() << "' is not writable. Using '"
+                      << homeFallback.string() << "' instead.\n";
+            return homeFallback;
+        }
+    }
+
+    const fs::path localFallback = fs::current_path() / "services";
+    if (EnsureDirectoryWritable(localFallback)) {
+        std::cout << "Config directory '" << requested.string() << "' is not writable. Using '"
+                  << localFallback.string() << "' instead.\n";
+        return localFallback;
+    }
+
+    throw std::runtime_error("No writable config directory available. Pass -d <dir> to a writable path.");
+}
+
 enum class RuntimeType
 {
     Unknown,
@@ -241,14 +309,10 @@ int Deploy(const std::string& vigFile, const std::string& configDir)
         return 1;
     }
 
-    if (!fs::exists(configDir)) {
-        std::error_code ec;
-        fs::create_directories(configDir, ec);
-    }
-
     try {
+        fs::path effectiveConfigDir = ResolveWritableConfigDir(configDir);
         auto svc = ParseVigFile(vigFile);
-        fs::path dest = fs::path(configDir) / (svc.name + ".vig");
+        fs::path dest = effectiveConfigDir / (svc.name + ".vig");
         fs::copy_file(vigFile, dest, fs::copy_options::overwrite_existing);
         
         std::cout << "Successfully deployed " << svc.name << " to " << dest.string() << "\n";
@@ -274,6 +338,14 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
 
     if (options.port <= 0 || options.port > 65535) {
         std::cerr << "Error: Invalid port. Expected 1..65535.\n";
+        return 1;
+    }
+
+    fs::path effectiveConfigDir;
+    try {
+        effectiveConfigDir = ResolveWritableConfigDir(configDir);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 
@@ -464,18 +536,13 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
         vigContent += "env = " + env + "\n";
     }
 
-    if (!fs::exists(configDir)) {
-        std::error_code ec;
-        fs::create_directories(configDir, ec);
-    }
-
-    fs::path targetVig = fs::path(configDir) / (name + ".vig");
+    fs::path targetVig = effectiveConfigDir / (name + ".vig");
     fs::path tempVig = targetVig;
     tempVig += ".tmp";
 
     std::ofstream ofs(tempVig);
     if (!ofs.is_open()) {
-        std::cerr << "Error: Failed to write configuration file.\n";
+        std::cerr << "Error: Failed to write configuration file at " << tempVig.string() << "\n";
         return 1;
     }
     ofs << vigContent;
@@ -492,6 +559,7 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
     }
 
     std::cout << "\nSuccessfully deployed " << name << "!\n";
+    std::cout << "Config file: " << targetVig.string() << "\n";
     if (useDocker) {
         std::cout << "Routing domain: " << domain << " -> container " << container << "\n";
     } else {

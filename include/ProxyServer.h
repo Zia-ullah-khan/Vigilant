@@ -10,20 +10,17 @@
 #include <chrono>
 #include <mutex>
 #include <memory>
-#include <array>
-#include <functional>
 
 class ProxyServer
 {
 public:
-    ProxyServer(int listenPort, ServiceManager& manager, const std::unordered_map<std::string, std::pair<std::string, std::string>>& domainCerts);
+    ProxyServer(int listenPort, ServiceManager& manager, const std::string& certPath = "", const std::string& keyPath = "");
 
     void Start();
     void Stop();
 
 private:
     void HandleRequest(const httplib::Request& req, httplib::Response& res);
-    void HandleWebSocket(const httplib::Request& req, httplib::ws::WebSocket& client_ws);
     std::string ExtractDomain(const httplib::Request& req);
     bool CheckRateLimit(const std::string& ip, int limit);
 
@@ -32,5 +29,5 @@ private:
     std::unique_ptr<httplib::Server> _server;
 
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> _rateLimits;
-    std::array<std::mutex, 16> _rateMutexes;
+    std::mutex _rateMutex;
 };
