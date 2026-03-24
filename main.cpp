@@ -37,6 +37,8 @@ static void PrintUsage(const char* program)
               << "  ls          List deployed services\n"
               << "  logs        Fetch 100 recent log lines for a deployed service\n"
               << "  rm          Remove a deployed service (e.g. vigilant rm app)\n"
+              << "  start       Start the vigilant system service (systemd)\n"
+              << "  restart     Restart the vigilant system service (systemd)\n"
               << "\nDeploy Options:\n"
               << "  --branch <name>      Git branch to deploy\n"
               << "  --tag <name>         Git tag to deploy\n"
@@ -79,7 +81,7 @@ int main(int argc, char* argv[])
     std::string cmd = (argc > 1) ? argv[1] : "server";
     int startIndex = 1;
 
-    if (cmd == "deploy" || cmd == "ls" || cmd == "logs" || cmd == "rm" || cmd == "server") {
+    if (cmd == "deploy" || cmd == "ls" || cmd == "logs" || cmd == "rm" || cmd == "start" || cmd == "restart" || cmd == "server") {
         startIndex = 2;
     } else if (cmd == "-h" || cmd == "--help") {
         PrintUsage(argv[0]);
@@ -143,6 +145,10 @@ int main(int argc, char* argv[])
     } else if (cmd == "rm") {
         if (argc <= startIndex) { std::cerr << "Missing service name to remove.\n"; return 1; }
         return CLI::Remove(argv[startIndex], configDir);
+    } else if (cmd == "start") {
+        return CLI::StartDaemon();
+    } else if (cmd == "restart") {
+        return CLI::RestartDaemon();
     }
 
     for (int i = startIndex; i < argc; ++i)

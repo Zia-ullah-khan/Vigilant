@@ -23,4 +23,6 @@ struct DeployOptions {
     int List(const std::string& configDir);
     int Remove(const std::string& serviceName, const std::string& configDir);
     int Logs(const std::string& serviceName, const std::string& configDir);
+    int StartDaemon();
+    int RestartDaemon();
 }
