@@ -414,8 +414,9 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
             ofs << "FROM node:18-alpine\n"
                    "WORKDIR /app\n"
                    "COPY package*.json ./\n"
-                   "RUN npm install\n"
+                   "RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi\n"
                    "COPY . .\n"
+                   "RUN npm run build --if-present\n"
                    "EXPOSE 8080\n"
                    "CMD [\"npm\", \"start\"]\n";
             ofs.close();
@@ -491,6 +492,13 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
         }
         if (res != 0) {
             std::cerr << "Error: Failed to install Node.js dependencies for process mode.\n";
+            return 1;
+        }
+
+        std::cout << "Running Node.js build for process mode (if script exists)...\n";
+        res = RunCommand("npm", {"--prefix", buildDir.string(), "run", "build", "--if-present"});
+        if (res != 0) {
+            std::cerr << "Error: Node.js build failed for process mode.\n";
             return 1;
         }
     }

@@ -48,7 +48,7 @@ Usage: vigilant [options]
   -p <port>         Listen port (default: 9000)
   -dash <port>      Dashboard listen port (default: 9001)
   -t <min>          Inactivity timeout in minutes (default: 10)
-  -l <filepath>     Log file path (default: /var/log/vigilant.log)
+   -l <filepath>     Log file path (default: /var/log/vigilant.log, auto-falls back to user-local path)
   --cert <filepath> Global SSL certificate file
   --key <filepath>  Global SSL key file
   -h, --help        Show help message

@@ -200,7 +200,14 @@ int main(int argc, char* argv[])
         Logger::Info("SSL Key: " + keyFile);
     }
     Logger::Info("Sleep timeout: " + std::to_string(sleepTimeoutMin) + " min");
-    Logger::Info("Log file: " + logFile);
+    if (Logger::IsFileLoggingEnabled())
+    {
+        Logger::Info("Log file: " + Logger::GetActiveLogPath());
+    }
+    else
+    {
+        Logger::Warn("File logging disabled; using console output only.");
+    }
 
     std::vector<VigService> services;
     try
