@@ -153,6 +153,87 @@ static std::string ExtractRepoName(const std::string& repoUrl)
     return SanitizeName(name);
 }
 
+enum class RuntimeType
+{
+    Unknown,
+    Node,
+    Python
+};
+
+static RuntimeType DetectRuntime(const fs::path& repoDir)
+{
+    if (fs::exists(repoDir / "package.json")) {
+        return RuntimeType::Node;
+    }
+    if (fs::exists(repoDir / "requirements.txt")) {
+        return RuntimeType::Python;
+    }
+    return RuntimeType::Unknown;
+}
+
+static bool IsValidEnvPair(const std::string& pair)
+{
+    const size_t eq = pair.find('=');
+    if (eq == std::string::npos || eq == 0) {
+        return false;
+    }
+
+    const std::string key = pair.substr(0, eq);
+    for (char c : key) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static std::string BuildProcessCommand(RuntimeType runtime, const fs::path& buildDir, int port, const std::vector<std::string>& envVars)
+{
+    std::string cmd;
+#ifdef _WIN32
+    cmd = "cd /d \"" + buildDir.string() + "\" && set PORT=" + std::to_string(port) + " && ";
+#else
+    cmd = "cd \"" + buildDir.string() + "\" && PORT=" + std::to_string(port) + " ";
+#endif
+
+    for (const auto& env : envVars) {
+        if (!IsValidEnvPair(env)) {
+            continue;
+        }
+#ifdef _WIN32
+        const size_t eq = env.find('=');
+        cmd += "set " + env.substr(0, eq) + "=" + env.substr(eq + 1) + " && ";
+#else
+        cmd += env + " ";
+#endif
+    }
+
+    if (runtime == RuntimeType::Node) {
+#ifdef _WIN32
+        cmd += "npm start";
+#else
+        cmd += "npm start";
+#endif
+    } else {
+#ifdef _WIN32
+        cmd += "python app.py";
+#else
+        cmd += "python3 app.py";
+#endif
+    }
+
+    return cmd;
+}
+
+static std::string BuildPidFilePath(const std::string& serviceName)
+{
+    std::error_code ec;
+    fs::path pidDir = fs::temp_directory_path(ec) / "vigilant" / "pids";
+    fs::create_directories(pidDir, ec);
+    return (pidDir / (serviceName + ".pid")).string();
+}
+
 int Deploy(const std::string& vigFile, const std::string& configDir)
 {
     if (!fs::exists(vigFile)) {
@@ -239,6 +320,8 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
         resolvedCommit = options.commit;
     }
 
+    RuntimeType runtime = DetectRuntime(buildDir);
+
     fs::path dockerfile;
     if (!options.dockerfile.empty()) {
         dockerfile = buildDir / fs::path(options.dockerfile);
@@ -253,10 +336,7 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
     if (!fs::exists(dockerfile)) {
         std::cout << "No Dockerfile detected. Looking for supported auto-build runtimes...\n";
 
-        fs::path packageJson = buildDir / "package.json";
-        fs::path requirementsTxt = buildDir / "requirements.txt";
-
-        if (fs::exists(packageJson)) {
+        if (runtime == RuntimeType::Node) {
             std::cout << "Node.js project detected. Generating native Dockerfile...\n";
             std::ofstream ofs(dockerfile);
             ofs << "FROM node:18-alpine\n"
@@ -267,7 +347,7 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
                    "EXPOSE 8080\n"
                    "CMD [\"npm\", \"start\"]\n";
             ofs.close();
-        } else if (fs::exists(requirementsTxt)) {
+        } else if (runtime == RuntimeType::Python) {
             std::cout << "Python project detected. Generating native Dockerfile...\n";
             std::ofstream ofs(dockerfile);
             ofs << "FROM python:3.10-slim\n"
@@ -307,11 +387,40 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
     }
     buildArgs.push_back(contextDir.string());
 
-    std::cout << "Building Docker image: " << imageName << "...\n";
-    res = RunCommand("docker", buildArgs);
-    if (res != 0) {
-        std::cerr << "Error: Failed to build Docker image.\n";
-        return 1;
+    bool dockerReady = (RunCommand("docker", {"version", "--format", "{{.Server.Version}}"}) == 0);
+    bool useDocker = dockerReady;
+
+    if (dockerReady) {
+        std::cout << "Building Docker image: " << imageName << "...\n";
+        res = RunCommand("docker", buildArgs);
+        if (res != 0) {
+            if (runtime == RuntimeType::Unknown) {
+                std::cerr << "Error: Failed to build Docker image.\n";
+                return 1;
+            }
+            std::cout << "Docker build failed. Falling back to process deployment.\n";
+            useDocker = false;
+        }
+    } else {
+        if (runtime == RuntimeType::Unknown) {
+            std::cerr << "Error: Docker is unavailable and no process runtime was detected.\n";
+            return 1;
+        }
+        std::cout << "Docker is unavailable. Falling back to process deployment.\n";
+        useDocker = false;
+    }
+
+    if (!useDocker && runtime == RuntimeType::Node) {
+        std::cout << "Preparing Node.js dependencies for process mode...\n";
+        if (fs::exists(buildDir / "package-lock.json")) {
+            res = RunCommand("npm", {"--prefix", buildDir.string(), "ci"});
+        } else {
+            res = RunCommand("npm", {"--prefix", buildDir.string(), "install"});
+        }
+        if (res != 0) {
+            std::cerr << "Error: Failed to install Node.js dependencies for process mode.\n";
+            return 1;
+        }
     }
 
     std::string domain = options.domain.empty() ? (name + ".rfas.software") : options.domain;
@@ -321,19 +430,35 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
     std::string metadataTag = options.tag.empty() ? "" : options.tag;
     std::string metadataCommit = options.commit.empty() ? resolvedCommit : options.commit;
 
-    std::string vigContent =
-        "name = " + name + "\n"
-        "domain = " + domain + "\n"
-        "port = " + std::to_string(options.port) + "\n"
-        "type = docker\n"
-        "image = " + imageName + "\n"
-        "container = " + container + "\n"
-        "sourcerepo = " + options.repoUrl + "\n"
-        "sourcebranch = " + metadataBranch + "\n"
-        "sourcetag = " + metadataTag + "\n"
-        "sourcecommit = " + metadataCommit + "\n"
-        "buildcontext = " + (options.context.empty() ? "." : options.context) + "\n"
-        "dockerfile = " + (options.dockerfile.empty() ? "Dockerfile" : options.dockerfile) + "\n";
+    std::string vigContent;
+    if (useDocker) {
+        vigContent =
+            "name = " + name + "\n"
+            "domain = " + domain + "\n"
+            "port = " + std::to_string(options.port) + "\n"
+            "type = docker\n"
+            "image = " + imageName + "\n"
+            "container = " + container + "\n"
+            "sourcerepo = " + options.repoUrl + "\n"
+            "sourcebranch = " + metadataBranch + "\n"
+            "sourcetag = " + metadataTag + "\n"
+            "sourcecommit = " + metadataCommit + "\n"
+            "buildcontext = " + (options.context.empty() ? "." : options.context) + "\n"
+            "dockerfile = " + (options.dockerfile.empty() ? "Dockerfile" : options.dockerfile) + "\n";
+    } else {
+        std::string command = BuildProcessCommand(runtime, buildDir, options.port, options.envVars);
+        vigContent =
+            "name = " + name + "\n"
+            "domain = " + domain + "\n"
+            "port = " + std::to_string(options.port) + "\n"
+            "type = process\n"
+            "command = " + command + "\n"
+            "pidfile = " + BuildPidFilePath(name) + "\n"
+            "sourcerepo = " + options.repoUrl + "\n"
+            "sourcebranch = " + metadataBranch + "\n"
+            "sourcetag = " + metadataTag + "\n"
+            "sourcecommit = " + metadataCommit + "\n";
+    }
 
     for (const auto& env : options.envVars) {
         vigContent += "env = " + env + "\n";
@@ -367,7 +492,11 @@ int DeployGit(const DeployOptions& options, const std::string& configDir)
     }
 
     std::cout << "\nSuccessfully deployed " << name << "!\n";
-    std::cout << "Routing domain: " << domain << " -> container " << container << "\n";
+    if (useDocker) {
+        std::cout << "Routing domain: " << domain << " -> container " << container << "\n";
+    } else {
+        std::cout << "Routing domain: " << domain << " -> process in " << buildDir.string() << "\n";
+    }
     if (!resolvedCommit.empty()) {
         std::cout << "Resolved commit: " << resolvedCommit << "\n";
     }
