@@ -4,6 +4,8 @@ project(Vigilant)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(GNUInstallDirs)
+
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 add_executable(vigilant
@@ -45,4 +47,23 @@ target_link_libraries(vigilant_tests PRIVATE Threads::Threads)
 if(OPENSSL_FOUND)
     target_compile_definitions(vigilant_tests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
     target_link_libraries(vigilant_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
+install(TARGETS vigilant vigilant_tests
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+if(UNIX)
+    option(VIGILANT_AUTO_SYMLINK_GLOBAL "Attempt to create /usr/local/bin/vigilant after building vigilant" ON)
+    set(VIGILANT_GLOBAL_LINK_PATH "/usr/local/bin/vigilant" CACHE STRING "Global command path for vigilant symlink")
+
+    if(VIGILANT_AUTO_SYMLINK_GLOBAL)
+        add_custom_command(TARGET vigilant POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                -DINPUT=$<TARGET_FILE:vigilant>
+                -DOUTPUT=${VIGILANT_GLOBAL_LINK_PATH}
+                -P ${CMAKE_SOURCE_DIR}/cmake/CreateSymlinkIfWritable.cmake
+            VERBATIM
+        )
+    endif()
 endif()
