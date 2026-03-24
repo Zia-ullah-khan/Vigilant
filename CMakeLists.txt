@@ -14,6 +14,7 @@ add_executable(vigilant
     src/Logger.cpp
     src/StatsManager.cpp
     src/DashboardServer.cpp
+    src/CLI.cpp
 )
 
 find_package(Threads REQUIRED)
@@ -29,7 +30,14 @@ else()
 endif()
 
 add_executable(vigilant_tests
+    tests/test_main.cpp
+    tests/test_vigconfig.cpp
+    tests/test_cli.cpp
     tests/test_traffic.cpp
+    src/VigConfig.cpp
+    src/CLI.cpp
+    src/Logger.cpp
+    src/StatsManager.cpp
 )
 target_include_directories(vigilant_tests PRIVATE include)
 target_link_libraries(vigilant_tests PRIVATE Threads::Threads)

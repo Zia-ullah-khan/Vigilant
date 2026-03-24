@@ -1,8 +1,8 @@
-#define CATCH_CONFIG_MAIN
 #include "../include/catch.hpp"
 #include "../include/httplib_vendor.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -56,7 +56,11 @@ void TrafficBurst(const std::string &domain, int totalRequests,
   REQUIRE(success == totalRequests);
 }
 
-TEST_CASE("Vigilant Load Testing", "[load]") {
+TEST_CASE("Vigilant Load Testing", "[load][integration][.]") {
+  if (std::getenv("VIGILANT_INTEGRATION") == nullptr) {
+    SUCCEED("Skipping integration traffic test. Set VIGILANT_INTEGRATION=1 to run.");
+    return;
+  }
 
   // Note: Vigilant must be running for these integration tests to pass.
 

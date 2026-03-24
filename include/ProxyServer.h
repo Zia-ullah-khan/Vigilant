@@ -10,6 +10,8 @@
 #include <chrono>
 #include <mutex>
 #include <memory>
+#include <array>
+#include <functional>
 
 class ProxyServer
 {
@@ -30,5 +32,5 @@ private:
     std::unique_ptr<httplib::Server> _server;
 
     std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> _rateLimits;
-    std::mutex _rateMutex;
+    std::array<std::mutex, 16> _rateMutexes;
 };

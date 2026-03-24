@@ -5,9 +5,12 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include <shared_mutex>
+#include <memory>
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <condition_variable>
 
 #ifdef _WIN32
 typedef int pid_t;
@@ -15,12 +18,20 @@ typedef int pid_t;
 #include <sys/types.h>
 #endif
 
+enum class ServiceStatus {
+    SLEEPING,
+    STARTING,
+    RUNNING
+};
+
 struct ServiceState
 {
     VigService config;
-    bool awake = false;
+    ServiceStatus status = ServiceStatus::SLEEPING;
     std::chrono::steady_clock::time_point lastActivity;
     pid_t pid = 0;
+    std::mutex stateMutex;
+    std::condition_variable cv;
 };
 
 class ServiceManager
@@ -38,7 +49,9 @@ public:
     void StartReaper();
     void StopReaper();
 
-    ServiceState* FindByDomain(const std::string& domain);
+    void ReloadConfigs(const std::vector<VigService>& newConfigs);
+
+    std::shared_ptr<ServiceState> FindByDomain(const std::string& domain);
 
 private:
     bool StartDocker(ServiceState& state);
@@ -48,9 +61,9 @@ private:
     bool HealthCheck(const ServiceState& state);
     void ReaperLoop();
 
-    std::unordered_map<std::string, ServiceState> _services;
+    std::unordered_map<std::string, std::shared_ptr<ServiceState>> _services;
     std::unordered_map<std::string, std::string> _domainToName;
-    std::mutex _mutex;
+    std::shared_mutex _mapMutex;
 
     int _sleepMinutes;
     std::atomic<bool> _reaperRunning{false};

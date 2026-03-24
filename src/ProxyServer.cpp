@@ -103,7 +103,8 @@ bool ProxyServer::CheckRateLimit(const std::string& ip, int limit)
 {
     if (limit <= 0) return true;
 
-    std::lock_guard<std::mutex> lock(_rateMutex);
+    size_t hash = std::hash<std::string>{}(ip) % 16;
+    std::lock_guard<std::mutex> lock(_rateMutexes[hash]);
     auto& history = _rateLimits[ip];
     auto now = std::chrono::steady_clock::now();
 
@@ -178,7 +179,7 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
         return;
     }
 
-    ServiceState* state = _manager.FindByDomain(domain);
+    auto state = _manager.FindByDomain(domain);
 
     if (!state)
     {
@@ -199,9 +200,17 @@ void ProxyServer::HandleRequest(const httplib::Request& req, httplib::Response& 
         return;
     }
 
-    if (!state->awake)
+    bool needsWake = false;
     {
-        Logger::Info("Request for sleeping service: " + state->config.name);
+        std::lock_guard<std::mutex> lck(state->stateMutex);
+        if (state->status != ServiceStatus::RUNNING) {
+            needsWake = true;
+        }
+    }
+
+    if (needsWake)
+    {
+        Logger::Info("Request for sleeping/starting service: " + state->config.name);
 
         if (!_manager.WakeService(state->config.name))
         {
@@ -306,7 +315,7 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
         return;
     }
 
-    ServiceState* state = _manager.FindByDomain(domain);
+    auto state = _manager.FindByDomain(domain);
     if (!state) {
         client_ws.close(httplib::ws::CloseStatus::PolicyViolation, "unknown service");
         return;
@@ -321,7 +330,15 @@ void ProxyServer::HandleWebSocket(const httplib::Request& req, httplib::ws::WebS
         return;
     }
 
-    if (!state->awake) {
+    bool needsWake = false;
+    {
+        std::lock_guard<std::mutex> lck(state->stateMutex);
+        if (state->status != ServiceStatus::RUNNING) {
+            needsWake = true;
+        }
+    }
+    
+    if (needsWake) {
         if (!_manager.WakeService(state->config.name)) {
             client_ws.close(httplib::ws::CloseStatus::InternalError, "service failed to start");
             return;

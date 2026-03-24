@@ -1,6 +1,7 @@
 #include "../include/ServiceManager.h"
 #include "../include/Logger.h"
 #include "../include/httplib_vendor.h"
+#include <unordered_set>
 
 #include <iostream>
 #include <cstdlib>
@@ -9,6 +10,9 @@
 #include <fstream>
 #include <array>
 #include <sstream>
+#include <filesystem>
+#include <vector>
+namespace fs = std::filesystem;
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
@@ -51,6 +55,54 @@ static std::string Exec(const std::string& cmd)
     return result;
 }
 
+static std::string EscapeShellArg(const std::string& value)
+{
+#ifdef _WIN32
+    std::string out = "\"";
+    for (char c : value) {
+        if (c == '"') {
+            out += "\\\"";
+        } else {
+            out += c;
+        }
+    }
+    out += "\"";
+    return out;
+#else
+    std::string out = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out += c;
+        }
+    }
+    out += "'";
+    return out;
+#endif
+}
+
+static std::string BuildCommand(const std::string& executable, const std::vector<std::string>& args)
+{
+    std::string cmd = EscapeShellArg(executable);
+    for (const auto& arg : args) {
+        cmd += " ";
+        cmd += EscapeShellArg(arg);
+    }
+    return cmd;
+}
+
+static int RunCommand(const std::string& executable, const std::vector<std::string>& args)
+{
+    const std::string cmd = BuildCommand(executable, args);
+    return std::system(cmd.c_str());
+}
+
+static std::string ExecCommand(const std::string& executable, const std::vector<std::string>& args)
+{
+    return Exec(BuildCommand(executable, args));
+}
+
 ServiceManager::ServiceManager(int sleepMinutes)
     : _sleepMinutes(sleepMinutes)
 {
@@ -63,23 +115,23 @@ ServiceManager::~ServiceManager()
 
 void ServiceManager::Register(const VigService& svc)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::unique_lock<std::shared_mutex> lock(_mapMutex);
 
-    ServiceState state;
-    state.config = svc;
-    state.awake = false;
-    state.lastActivity = std::chrono::steady_clock::now();
+    auto state = std::make_shared<ServiceState>();
+    state->config = svc;
+    state->status = ServiceStatus::SLEEPING;
+    state->lastActivity = std::chrono::steady_clock::now();
 
     _domainToName[svc.domain] = svc.name;
-    _services.emplace(svc.name, std::move(state));
+    _services.emplace(svc.name, state);
 
     std::cout << "Registered service: " << svc.name
               << " (" << svc.domain << " -> localhost:" << svc.port << ")" << std::endl;
 }
 
-ServiceState* ServiceManager::FindByDomain(const std::string& domain)
+std::shared_ptr<ServiceState> ServiceManager::FindByDomain(const std::string& domain)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::shared_lock<std::shared_mutex> lock(_mapMutex);
 
     auto it = _domainToName.find(domain);
     if (it == _domainToName.end())
@@ -93,111 +145,138 @@ ServiceState* ServiceManager::FindByDomain(const std::string& domain)
         return nullptr;
     }
 
-    return &svcIt->second;
+    return svcIt->second;
 }
 
 bool ServiceManager::WakeService(const std::string& name)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _services.find(name);
-    if (it == _services.end())
+    std::shared_ptr<ServiceState> state;
     {
-        std::cerr << "Unknown service: " << name << std::endl;
-        return false;
+        std::shared_lock<std::shared_mutex> lock(_mapMutex);
+        auto it = _services.find(name);
+        if (it == _services.end())
+        {
+            std::cerr << "Unknown service: " << name << std::endl;
+            return false;
+        }
+        state = it->second;
     }
 
-    ServiceState& state = it->second;
+    std::unique_lock<std::mutex> lock(state->stateMutex);
 
-    if (state.awake)
-    {
+    if (state->status == ServiceStatus::RUNNING) {
         return true;
     }
 
-    Logger::Info("Waking service: " + name);
+    if (state->status == ServiceStatus::SLEEPING) {
+        Logger::Info("Waking service (Async): " + name);
+        state->status = ServiceStatus::STARTING;
+        
+        std::thread([this, state, name]() {
+            bool started = false;
+            // Since this accesses ServiceManager methods (this->StartDocker), ServiceManager must outlive the thread.
+            // The daemon architecture guarantees ServiceManager lives until shutdown.
+            if (state->config.type == ServiceType::Docker) {
+                started = StartDocker(*state);
+            } else {
+                started = StartProcess(*state);
+            }
 
-    bool started = false;
-    if (state.config.type == ServiceType::Docker)
-    {
-        started = StartDocker(state);
+            if (!started) {
+                Logger::Error("Failed to start service: " + name);
+            } else if (!HealthCheck(*state)) {
+                Logger::Error("Health check failed for: " + name);
+                started = false;
+            }
+
+            std::unique_lock<std::mutex> bgLock(state->stateMutex);
+            if (started) {
+                state->status = ServiceStatus::RUNNING;
+                state->lastActivity = std::chrono::steady_clock::now();
+                Logger::Info("Service awake: " + name);
+            } else {
+                state->status = ServiceStatus::SLEEPING;
+            }
+            bgLock.unlock();
+            state->cv.notify_all();
+        }).detach();
     }
-    else
-    {
-        started = StartProcess(state);
-    }
 
-    if (!started)
-    {
-        Logger::Error("Failed to start service: " + name);
-        return false;
-    }
+    state->cv.wait(lock, [&state] { 
+        return state->status == ServiceStatus::RUNNING || state->status == ServiceStatus::SLEEPING;
+    });
 
-    if (!HealthCheck(state))
-    {
-        Logger::Error("Health check failed for: " + name);
-        return false;
-    }
-
-    state.awake = true;
-    state.lastActivity = std::chrono::steady_clock::now();
-
-    Logger::Info("Service awake: " + name);
-    return true;
+    return state->status == ServiceStatus::RUNNING;
 }
 
 void ServiceManager::SleepService(const std::string& name)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _services.find(name);
-    if (it == _services.end())
+    std::shared_ptr<ServiceState> state;
     {
-        return;
+        std::shared_lock<std::shared_mutex> lock(_mapMutex);
+        auto it = _services.find(name);
+        if (it == _services.end())
+        {
+            return;
+        }
+        state = it->second;
     }
 
-    ServiceState& state = it->second;
+    std::unique_lock<std::mutex> stateLock(state->stateMutex);
 
-    if (!state.awake)
+    if (state->status == ServiceStatus::SLEEPING)
     {
         return;
     }
 
     Logger::Info("Sleeping service: " + name);
 
-    if (state.config.type == ServiceType::Docker)
+    if (state->config.type == ServiceType::Docker)
     {
-        StopDocker(state);
+        StopDocker(*state);
     }
     else
     {
-        StopProcess(state);
+        StopProcess(*state);
     }
 
-    state.awake = false;
+    state->status = ServiceStatus::SLEEPING;
     Logger::Info("Service asleep: " + name);
 }
 
 bool ServiceManager::IsAwake(const std::string& name)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _services.find(name);
-    if (it == _services.end())
+    std::shared_ptr<ServiceState> state;
     {
-        return false;
+        std::shared_lock<std::shared_mutex> lock(_mapMutex);
+        auto it = _services.find(name);
+        if (it == _services.end())
+        {
+            return false;
+        }
+        state = it->second;
     }
 
-    return it->second.awake;
+    std::lock_guard<std::mutex> stateLock(state->stateMutex);
+    return state->status == ServiceStatus::RUNNING;
 }
 
 void ServiceManager::TouchService(const std::string& name)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    auto it = _services.find(name);
-    if (it != _services.end())
+    std::shared_ptr<ServiceState> state;
     {
-        it->second.lastActivity = std::chrono::steady_clock::now();
+        std::shared_lock<std::shared_mutex> lock(_mapMutex);
+        auto it = _services.find(name);
+        if (it != _services.end())
+        {
+            state = it->second;
+        }
+    }
+    
+    if (state)
+    {
+        std::lock_guard<std::mutex> stateLock(state->stateMutex);
+        state->lastActivity = std::chrono::steady_clock::now();
     }
 }
 
@@ -205,9 +284,9 @@ void ServiceManager::TouchService(const std::string& name)
 
 bool ServiceManager::StartDocker(ServiceState& state)
 {
-    std::string checkCmd = "docker ps -a --filter name=" + state.config.container
-                         + " --format '{{.Status}}'";
-    std::string status = Exec(checkCmd);
+    std::string status = ExecCommand("docker", {
+        "ps", "-a", "--filter", "name=" + state.config.container, "--format", "{{.Status}}"
+    });
 
     if (status.find("Up") != std::string::npos)
     {
@@ -218,8 +297,7 @@ bool ServiceManager::StartDocker(ServiceState& state)
     if (!status.empty())
     {
         Logger::Info("Starting existing docker container: " + state.config.container);
-        std::string startCmd = "docker start " + state.config.container;
-        int ret = system(startCmd.c_str());
+        int ret = RunCommand("docker", {"start", state.config.container});
         if (ret != 0) {
             Logger::Error("Failed to start existing docker container: " + state.config.container);
         }
@@ -227,11 +305,11 @@ bool ServiceManager::StartDocker(ServiceState& state)
     }
 
     Logger::Info("Running new docker container: " + state.config.container + " from image: " + state.config.image);
-    std::string runCmd = "docker run -d --name " + state.config.container
-                       + " -p 127.0.0.1:" + std::to_string(state.config.port)
-                       + ":" + std::to_string(state.config.port)
-                       + " " + state.config.image;
-    int ret = system(runCmd.c_str());
+    int ret = RunCommand("docker", {
+        "run", "-d", "--name", state.config.container,
+        "-p", "127.0.0.1:" + std::to_string(state.config.port) + ":" + std::to_string(state.config.port),
+        state.config.image
+    });
     if (ret != 0) {
         Logger::Error("Failed to run new docker container: " + state.config.container);
     }
@@ -241,8 +319,7 @@ bool ServiceManager::StartDocker(ServiceState& state)
 void ServiceManager::StopDocker(ServiceState& state)
 {
     Logger::Info("Stopping docker container: " + state.config.container);
-    std::string cmd = "docker stop " + state.config.container;
-    int ret = system(cmd.c_str());
+    int ret = RunCommand("docker", {"stop", state.config.container});
     if (ret != 0) {
         Logger::Error("Failed to stop docker container: " + state.config.container);
     }
@@ -264,10 +341,18 @@ bool ServiceManager::StartProcess(ServiceState& state)
     if (pid == 0)
     {
         setsid();
+        
+        std::error_code ec;
+        fs::path logDir = fs::temp_directory_path(ec) / "vigilant" / "logs";
+        fs::create_directories(logDir, ec);
+        std::string logPath = (logDir / (state.config.name + ".log")).string();
+        
+        std::string fullCmd = state.config.command + " > \"" + logPath + "\" 2>&1";
+
 #ifdef _WIN32
-        _execl("cmd.exe", "cmd.exe", "/c", state.config.command.c_str(), nullptr);
+        _execl("cmd.exe", "cmd.exe", "/c", fullCmd.c_str(), nullptr);
 #else
-        execl("/bin/sh", "sh", "-c", state.config.command.c_str(), nullptr);
+        execl("/bin/sh", "sh", "-c", fullCmd.c_str(), nullptr);
 #endif
         // If execl returns, it means it failed
         Logger::Error("Execl failed for: " + state.config.name);
@@ -403,19 +488,20 @@ void ServiceManager::ReaperLoop()
         std::vector<std::string> toSleep;
 
         {
-            std::lock_guard<std::mutex> lock(_mutex);
+            std::shared_lock<std::shared_mutex> lock(_mapMutex);
             for (auto& [name, state] : _services)
             {
-                if (!state.awake)
+                std::lock_guard<std::mutex> stateLock(state->stateMutex);
+                if (state->status != ServiceStatus::RUNNING) // Changed from !state->awake
                 {
                     continue;
                 }
 
                 auto idle = std::chrono::duration_cast<std::chrono::minutes>(
-                    now - state.lastActivity
+                    now - state->lastActivity
                 ).count();
 
-                if (idle >= _sleepMinutes)
+                if (idle >= _sleepMinutes) // Using _sleepMinutes as the global timeout for now
                 {
                     Logger::Info("Service " + name + " idle for " + std::to_string(idle) + " minutes, marking for sleep.");
                     toSleep.push_back(name);
@@ -427,5 +513,84 @@ void ServiceManager::ReaperLoop()
         {
             SleepService(name);
         }
+    }
+}
+
+void ServiceManager::ReloadConfigs(const std::vector<VigService>& newConfigs)
+{
+    std::unique_lock<std::shared_mutex> lock(_mapMutex);
+
+    std::unordered_set<std::string> newNames;
+
+    for (const auto& svc : newConfigs)
+    {
+        newNames.insert(svc.name);
+        auto it = _services.find(svc.name);
+        
+        if (it != _services.end())
+        {
+            auto state = it->second;
+            std::lock_guard<std::mutex> stateLock(state->stateMutex);
+            
+            // Check if critical restart-requiring fields changed
+            bool needsRestart = (state->config.port != svc.port || 
+                                 state->config.command != svc.command || 
+                                 state->config.image != svc.image ||
+                                 state->config.container != svc.container ||
+                                 state->config.type != svc.type);
+                                 
+            if (needsRestart && (state->status == ServiceStatus::RUNNING || state->status == ServiceStatus::STARTING))
+            {
+                if (state->config.type == ServiceType::Docker) StopDocker(*state);
+                else StopProcess(*state);
+                state->status = ServiceStatus::SLEEPING;
+            }
+
+            // Check if domain changed
+            if (state->config.domain != svc.domain)
+            {
+                _domainToName.erase(state->config.domain);
+                _domainToName[svc.domain] = svc.name;
+            }
+
+            state->config = svc;
+            Logger::Info("Reloaded config for service: " + svc.name);
+        }
+        else
+        {
+            auto state = std::make_shared<ServiceState>();
+            state->config = svc;
+            state->status = ServiceStatus::SLEEPING;
+            state->lastActivity = std::chrono::steady_clock::now();
+
+            _domainToName[svc.domain] = svc.name;
+            _services.emplace(svc.name, state);
+            Logger::Info("Loaded new service from hot reload: " + svc.name);
+        }
+    }
+
+    std::vector<std::string> toRemove;
+    for (const auto& [name, state] : _services)
+    {
+        if (newNames.find(name) == newNames.end())
+        {
+            toRemove.push_back(name);
+        }
+    }
+
+    for (const auto& name : toRemove)
+    {
+        auto state = _services[name];
+        {
+            std::lock_guard<std::mutex> stateLock(state->stateMutex);
+            if (state->status == ServiceStatus::RUNNING || state->status == ServiceStatus::STARTING)
+            {
+                if (state->config.type == ServiceType::Docker) StopDocker(*state);
+                else StopProcess(*state);
+            }
+        }
+        _domainToName.erase(state->config.domain);
+        _services.erase(name);
+        Logger::Info("Removed deleted service during hot reload: " + name);
     }
 }

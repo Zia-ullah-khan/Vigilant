@@ -1,4 +1,5 @@
 #include "include/VigConfig.h"
+#include "include/CLI.h"
 #include "include/ServiceManager.h"
 #include "include/ProxyServer.h"
 #include "include/Logger.h"
@@ -7,6 +8,9 @@
 #include <iostream>
 #include <csignal>
 #include <string>
+#include <filesystem>
+#include <thread>
+#include <atomic>
 
 static ProxyServer* g_server = nullptr;
 static DashboardServer* g_dash = nullptr;
@@ -26,10 +30,32 @@ static void SignalHandler(int sig)
 
 static void PrintUsage(const char* program)
 {
-    std::cout << "Usage: " << program << " [options]\n"
+    std::cout << "Usage: " << program << " <command> [options]\n"
+              << "\nCommands:\n"
+              << "  server      Run the proxy daemon\n"
+              << "  deploy      Deploy a git repo or .vig config (e.g. vigilant deploy https://github.com/user/app)\n"
+              << "  ls          List deployed services\n"
+              << "  logs        Fetch 100 recent log lines for a deployed service\n"
+              << "  rm          Remove a deployed service (e.g. vigilant rm app)\n"
+              << "\nDeploy Options:\n"
+              << "  --branch <name>      Git branch to deploy\n"
+              << "  --tag <name>         Git tag to deploy\n"
+              << "  --commit <sha>       Git commit to deploy\n"
+              << "  --domain <name>      Route domain override\n"
+              << "  --port <num>         Service port (default: 8080)\n"
+              << "  --dockerfile <path>  Dockerfile path relative to repo root\n"
+              << "  --context <path>     Docker build context relative to repo root\n"
+              << "  --container <name>   Docker container name override\n"
+              << "  --build-arg <k=v>    Docker build arg (repeatable)\n"
+              << "  --env <k=v>          Runtime env var (repeatable)\n"
+              << "\nServer Options:\n"
               << "  -d <dir>    Service config directory (default: /etc/vigilant/services)\n"
               << "  -p <port>   Listen port (default: 9000)\n"
+              << "  -dash <pt>  Dashboard listen port (default: 9001)\n"
               << "  -t <min>    Inactivity timeout in minutes (default: 10)\n"
+              << "  -l <file>   Log file path\n"
+              << "  --cert <f>  Global SSL certificate file\n"
+              << "  --key <f>   Global SSL key file\n"
               << std::endl;
 }
 
@@ -43,7 +69,83 @@ int main(int argc, char* argv[])
     std::string certFile = "";
     std::string keyFile = "";
 
-    for (int i = 1; i < argc; ++i)
+    // Pre-scan for config dir to use in CLI commands
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "-d" && i + 1 < argc) {
+            configDir = argv[i+1];
+        }
+    }
+
+    std::string cmd = (argc > 1) ? argv[1] : "server";
+    int startIndex = 1;
+
+    if (cmd == "deploy" || cmd == "ls" || cmd == "logs" || cmd == "rm" || cmd == "server") {
+        startIndex = 2;
+    } else if (cmd == "-h" || cmd == "--help") {
+        PrintUsage(argv[0]);
+        return 0;
+    } else if (cmd[0] != '-') {
+        std::cerr << "Unknown command: " << cmd << "\n";
+        PrintUsage(argv[0]);
+        return 1;
+    } else {
+        cmd = "server"; // assumed based on flags
+    }
+
+    if (cmd == "deploy") {
+        if (argc <= startIndex) { std::cerr << "Missing file or URL to deploy.\n"; return 1; }
+        std::string target = argv[startIndex];
+        if (target.find("http://") == 0 || target.find("https://") == 0 || target.find("git@") == 0 || target.find(".git") != std::string::npos) {
+            CLI::DeployOptions options;
+            options.repoUrl = target;
+
+            for (int i = startIndex + 1; i < argc; ++i) {
+                std::string arg = argv[i];
+                if (arg == "-d" && i + 1 < argc) {
+                    configDir = argv[++i];
+                } else if (arg == "--branch" && i + 1 < argc) {
+                    options.branch = argv[++i];
+                } else if (arg == "--tag" && i + 1 < argc) {
+                    options.tag = argv[++i];
+                } else if (arg == "--commit" && i + 1 < argc) {
+                    options.commit = argv[++i];
+                } else if (arg == "--domain" && i + 1 < argc) {
+                    options.domain = argv[++i];
+                } else if (arg == "--port" && i + 1 < argc) {
+                    options.port = std::stoi(argv[++i]);
+                } else if (arg == "--dockerfile" && i + 1 < argc) {
+                    options.dockerfile = argv[++i];
+                } else if (arg == "--context" && i + 1 < argc) {
+                    options.context = argv[++i];
+                } else if (arg == "--container" && i + 1 < argc) {
+                    options.container = argv[++i];
+                } else if (arg == "--build-arg" && i + 1 < argc) {
+                    options.buildArgs.push_back(argv[++i]);
+                } else if (arg == "--env" && i + 1 < argc) {
+                    options.envVars.push_back(argv[++i]);
+                } else if (arg == "-h" || arg == "--help") {
+                    PrintUsage(argv[0]);
+                    return 0;
+                } else {
+                    std::cerr << "Unknown deploy argument: " << arg << "\n";
+                    return 1;
+                }
+            }
+
+            return CLI::DeployGit(options, configDir);
+        }
+        return CLI::Deploy(target, configDir);
+    } else if (cmd == "ls") {
+        return CLI::List(configDir);
+    } else if (cmd == "logs") {
+        if (argc <= startIndex) { std::cerr << "Missing service name.\n"; return 1; }
+        return CLI::Logs(argv[startIndex], configDir);
+    } else if (cmd == "rm") {
+        if (argc <= startIndex) { std::cerr << "Missing service name to remove.\n"; return 1; }
+        return CLI::Remove(argv[startIndex], configDir);
+    }
+
+    for (int i = startIndex; i < argc; ++i)
     {
         std::string arg = argv[i];
 
@@ -150,12 +252,53 @@ int main(int argc, char* argv[])
     std::signal(SIGINT, SignalHandler);
     std::signal(SIGTERM, SignalHandler); // Used std::signal
 
+    std::atomic<bool> watcherRunning{true};
+    std::thread configWatcher([&]() {
+        auto getLatestTime = [](const std::string& dir) {
+            std::filesystem::file_time_type latest = std::filesystem::file_time_type::min();
+            bool found = false;
+            if (std::filesystem::exists(dir)) {
+                for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+                    if (entry.path().extension() == ".vig") {
+                        auto ftime = std::filesystem::last_write_time(entry);
+                        if (!found || ftime > latest) {
+                            latest = ftime;
+                            found = true;
+                        }
+                    }
+                }
+            }
+            return latest;
+        };
+
+        auto lastWrite = getLatestTime(configDir);
+        
+        while (watcherRunning) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            if (!watcherRunning) break;
+            
+            try {
+                auto currentWrite = getLatestTime(configDir);
+                if (currentWrite > lastWrite) {
+                    lastWrite = currentWrite;
+                    Logger::Info("Config directory change detected, hot-reloading...");
+                    auto newServices = LoadAllServices(configDir);
+                    manager.ReloadConfigs(newServices);
+                }
+            } catch (const std::exception& e) {
+                Logger::Error("Config watcher error: " + std::string(e.what()));
+            }
+        }
+    });
+
     Logger::Info("Starting proxy server..."); // Added logging
     server.Start();
+
+    watcherRunning = false;
+    if (configWatcher.joinable()) configWatcher.join();
 
     Logger::Info("Vigilant shutting down."); // Added logging
     manager.StopReaper();
 
-    // std::cout << "Vigilant stopped" << std::endl; // Removed, replaced by Logger::Info
     return 0;
 }
