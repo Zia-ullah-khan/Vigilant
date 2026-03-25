@@ -61,7 +61,7 @@ fi
 
 echo -e "${BLUE}[5/6]${NC} Moving binary to /usr/local/bin/vigilant..."
 chmod +x /tmp/vigilant
-mv /tmp/vigilant /usr/local/bin/vigilant
+mv /tmp/vigilant_build/build/vigilant /usr/local/bin/vigilant
 ln -sf /usr/local/bin/vigilant /usr/local/bin/vigi
 
 echo -e "${BLUE}[6/6]${NC} Finalizing logs..."
