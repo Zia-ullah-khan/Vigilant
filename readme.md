@@ -15,6 +15,20 @@ Vigilant is a lightweight, dynamic proxy server and service manager written in C
 - **HTTPS/SSL Support**: Native support for OpenSSL to handle secure connections, with SNI support.
 - **Service Configuration**: Easily define and load services from a designated configuration directory.
 
+## Installation
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://vigi.sh/install | bash
+```
+
+### Windows (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://vigi.sh/install-ps | iex"
+```
+
 ## Prerequisites
 
 - C++17 compatible compiler
