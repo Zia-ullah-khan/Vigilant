@@ -34,11 +34,11 @@ URL="https://github.com/Zia-ullah-khan/Vigilant/releases/latest/download/${BINAR
 
 echo -e "${BLUE}[2/6]${NC} Attempting fast install..."
 if curl -sLf -o /tmp/vigilant "$URL"; then
-    echo -e "${GREEN}[DONE]${NC} Binary found. (Skipping local tests for pre-built release)"
+    echo -e "${GREEN}[DONE]${NC} Binary found."
 else
     echo -e "${BLUE}[INFO]${NC} Binary not found. Building and Testing from source..."
     
-    apt-get update -y && apt-get install -y cmake build-essential libssl-to dev git
+    apt-get update -y && apt-get install -y cmake build-essential libssl-dev git
 
     BUILD_DIR="/tmp/vigilant_build"
     rm -rf "$BUILD_DIR"
@@ -56,7 +56,7 @@ else
         cd /tmp
         rm -rf "$BUILD_DIR"
     else
-        echo -e "${RED}[FAIL]${NC} Unit tests failed! Installation aborted to prevent unstable proxy."
+        echo -e "${RED}[FAIL]${NC} Unit tests failed! Installation aborted."
         rm -rf "$BUILD_DIR"
         exit 1
     fi
