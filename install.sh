@@ -25,28 +25,38 @@ echo -e "             ${BLUE}>> Ultra-Light Service Manager <<${NC}\n"
 OS=$(uname -s)
 echo -e "${BLUE}[1/6]${NC} Detected OS: ${CYAN}${OS}${NC}"
 
-echo -e "${BLUE}[2/6]${NC} Installing dependencies..."
-apt-get update -y && apt-get install -y cmake build-essential libssl-dev git
+BINARY="vigilant-linux-x64"
+URL="https://github.com/Zia-ullah-khan/Vigilant/releases/latest/download/${BINARY}"
 
-BUILD_DIR="/tmp/vigilant_build"
-rm -rf "$BUILD_DIR"
-git clone --depth 1 https://github.com/Zia-ullah-khan/Vigilant.git "$BUILD_DIR"
-cd "$BUILD_DIR"
-
-echo -e "${BLUE}[3/6]${NC} Compiling Vigilant + Unit Tests..."
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(nproc)
-
-echo -e "${BLUE}[4/6]${NC} Running Unit Tests..."
-if ./build/vigilant_tests "~[integration]"; then
-    echo -e "${GREEN}[PASS]${NC} All tests passed."
-    cp build/vigilant /tmp/vigilant
-    cd /tmp
-    rm -rf "$BUILD_DIR"
+echo -e "${BLUE}[2/6]${NC} Attempting to download pre-built binary..."
+if curl -sLf -o /tmp/vigilant "$URL"; then
+    echo -e "${GREEN}[DONE]${NC} Binary downloaded successfully."
 else
-    echo -e "${RED}[FAIL]${NC} Unit tests failed! Installation aborted."
+    echo -e "${BLUE}[INFO]${NC} Pre-built binary not found. Building from source..."
+    
+    echo -e "${BLUE}[2/6]${NC} Installing dependencies..."
+    apt-get update -y && apt-get install -y cmake build-essential libssl-dev git
+
+    BUILD_DIR="/tmp/vigilant_build"
     rm -rf "$BUILD_DIR"
-    exit 1
+    git clone --depth 1 https://github.com/Zia-ullah-khan/Vigilant.git "$BUILD_DIR"
+    cd "$BUILD_DIR"
+
+    echo -e "${BLUE}[3/6]${NC} Compiling Vigilant + Unit Tests..."
+    cmake -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --config Release -j$(nproc)
+
+    echo -e "${BLUE}[4/6]${NC} Running Unit Tests..."
+    if ./build/vigilant_tests "~[integration]"; then
+        echo -e "${GREEN}[PASS]${NC} All tests passed."
+        cp build/vigilant /tmp/vigilant
+        cd /tmp
+        rm -rf "$BUILD_DIR"
+    else
+        echo -e "${RED}[FAIL]${NC} Unit tests failed! Installation aborted."
+        rm -rf "$BUILD_DIR"
+        exit 1
+    fi
 fi
 
 echo -e "${BLUE}[5/6]${NC} Moving binary to /usr/local/bin/vigilant..."
