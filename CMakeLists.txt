@@ -53,6 +53,11 @@ install(TARGETS vigilant vigilant_tests
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
+if(APPLE)
+    target_link_libraries(vigilant PRIVATE "-framework CoreFoundation" "-framework Security")
+    target_link_libraries(vigilant_tests PRIVATE "-framework CoreFoundation" "-framework Security")
+endif()
+
 if(UNIX)
     option(VIGILANT_AUTO_SYMLINK_GLOBAL "Attempt to create /usr/local/bin/vigilant after building vigilant" ON)
     set(VIGILANT_GLOBAL_LINK_PATH "/usr/local/bin/vigilant" CACHE STRING "Global command path for vigilant symlink")
