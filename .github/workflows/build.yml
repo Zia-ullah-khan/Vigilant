@@ -1,4 +1,4 @@
-name: Build and Test
+name: Build, Test, and Package
 on:
   push:
     branches: [ main ]
@@ -17,28 +17,26 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install dependencies (Ubuntu)
+    - name: Dependencies (Ubuntu)
       if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential libssl-dev
+      run: sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev
 
-    - name: Install dependencies (Windows)
+    - name: Dependencies (Windows - FAST)
       if: runner.os == 'Windows'
+      shell: pwsh
       run: |
-        choco install openssl -y
-        # Note: cmake is usually pre-installed on GitHub Windows runners
+        # Use pre-installed OpenSSL instead of Choco
+        echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+        echo "C:\Program Files\OpenSSL-Win64\bin" >> $env:GITHUB_PATH
 
-    - name: Install dependencies (macOS)
+    - name: Dependencies (macOS)
       if: runner.os == 'macOS'
+      run: brew install openssl cmake
+
+    - name: Configure & Build
       run: |
-        brew install openssl cmake
-
-    - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-    - name: Build
-      run: cmake --build build --config Release
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
 
     - name: Run Unit Tests
       shell: bash
@@ -56,7 +54,7 @@ jobs:
         if [ "$RUNNER_OS" == "Windows" ]; then
           cp ./build/Release/vigilant.exe artifacts/vigilant-windows-x64.exe
         elif [ "$RUNNER_OS" == "macOS" ]; then
-          cp ./build/vigilant artifacts/vigilant-macos-x64
+          cp ./build/vigilant artifacts/vigilant-macos-arm64
         else
           cp ./build/vigilant artifacts/vigilant-linux-x64
         fi
@@ -66,7 +64,7 @@ jobs:
       with:
         name: vigilant-${{ matrix.os }}
         path: artifacts/
-        retention-days: 30
+        retention-days: 7
 
   release:
     needs: build
@@ -74,7 +72,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-      actions: read
+      packages: write
     
     steps:
     - uses: actions/checkout@v4
@@ -83,21 +81,36 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         path: release-artifacts
-    
-    - name: Organize artifacts
-      shell: bash
-      run: |
-        mkdir -p release-bins
-        cp release-artifacts/vigilant-ubuntu-latest/vigilant-linux-x64 release-bins/vigilant-linux-x64
-        cp release-artifacts/vigilant-windows-latest/vigilant-windows-x64.exe release-bins/vigilant-windows-x64.exe
-        cp release-artifacts/vigilant-macos-latest/vigilant-macos-x64 release-bins/vigilant-macos-x64
-        chmod +x release-bins/vigilant-*
-    
-    - name: Create Release
+
+    - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
-        files: release-bins/*
-        draft: false
-        prerelease: false
+        files: |
+          release-artifacts/vigilant-ubuntu-latest/vigilant-linux-x64
+          release-artifacts/vigilant-windows-latest/vigilant-windows-x64.exe
+          release-artifacts/vigilant-macos-latest/vigilant-macos-arm64
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        platforms: linux/amd64,linux/arm64
+        tags: |
+          ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:${{ github.ref_name }}
