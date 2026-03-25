@@ -41,12 +41,10 @@ jobs:
       - name: Dependencies (Ubuntu ARM64 Cross-Compile)
         if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y \
             cmake build-essential \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libssl-dev:arm64
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
       - name: Dependencies (Windows)
         if: matrix.os == 'windows-latest'
