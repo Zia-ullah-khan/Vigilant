@@ -59,16 +59,5 @@ if(APPLE)
 endif()
 
 if(UNIX)
-    option(VIGILANT_AUTO_SYMLINK_GLOBAL "Attempt to create /usr/local/bin/vigilant after building vigilant" ON)
-    set(VIGILANT_GLOBAL_LINK_PATH "/usr/local/bin/vigilant" CACHE STRING "Global command path for vigilant symlink")
-
-    if(VIGILANT_AUTO_SYMLINK_GLOBAL)
-        add_custom_command(TARGET vigilant POST_BUILD
-            COMMAND ${CMAKE_COMMAND}
-                -DINPUT=$<TARGET_FILE:vigilant>
-                -DOUTPUT=${VIGILANT_GLOBAL_LINK_PATH}
-                -P ${CMAKE_SOURCE_DIR}/cmake/CreateSymlinkIfWritable.cmake
-            VERBATIM
-        )
-    endif()
+    message(STATUS "Build complete. Run 'sudo make install' to finalize installation.")
 endif()
