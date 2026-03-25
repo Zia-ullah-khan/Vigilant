@@ -73,7 +73,7 @@ jobs:
             cmake -B build -DCMAKE_BUILD_TYPE=Release
           fi
 
-          cmake --build build --config Release --target vigilant -j$(nproc)
+          cmake --build build --config Release --target vigilant vigilant_tests --parallel
 
       - name: Run Unit Tests
         if: matrix.arch == 'x64'
