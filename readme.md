@@ -1,5 +1,7 @@
 ![Build Status](https://github.com/Zia-ullah-khan/Vigilant/actions/workflows/build.yml/badge.svg)
 ![Platform Support](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue)
+[![Release](https://img.shields.io/github/v/release/Zia-ullah-khan/Vigilant)](https://github.com/Zia-ullah-khan/Vigilant/releases)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/Zia-ullah-khan/Vigilant/pkgs/container/vigilant)
 
 # Vigilant
 
