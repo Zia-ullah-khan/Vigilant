@@ -1,0 +1,9 @@
+build/
+CMakeFiles/
+.git/
+.github/
+.vscode/
+.next/
+*.log
+*.tmp
+*.swp
