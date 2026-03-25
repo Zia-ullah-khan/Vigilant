@@ -1,31 +1,9 @@
-FROM debian:bookworm-slim AS build
+FROM python:3.12-slim
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       build-essential \
-       cmake \
-       libssl-dev \
-       pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /src
-COPY . .
-
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVIGILANT_AUTO_SYMLINK_GLOBAL=OFF \
-    && cmake --build build --config Release -j"$(nproc)"
-
-FROM debian:bookworm-slim AS runtime
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates \
-       libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+ARG BIN
 
 WORKDIR /app
-COPY --from=build /src/build/vigilant /usr/local/bin/vigilant
-
-RUN mkdir -p /etc/vigilant/services
+COPY --chmod=755 release-artifacts/${BIN} /usr/local/bin/vigilant
 
 EXPOSE 9000 9001
 VOLUME ["/etc/vigilant/services"]

@@ -17,15 +17,15 @@ jobs:
           - os: ubuntu-latest
             arch: x64
             artifact_name: vigilant-linux-x64
+          - os: ubuntu-latest
+            arch: arm64
+            artifact_name: vigilant-linux-arm64
           - os: windows-latest
             arch: x64
             artifact_name: vigilant-windows-x64.exe
           - os: macos-latest
-            arch: arm64
-            artifact_name: vigilant-macos-arm64
-          - os: ubuntu-latest
-            arch: arm64
-            artifact_name: vigilant-linux-arm64
+            arch: x64
+            artifact_name: vigilant-macos-x64
 
     steps:
     - uses: actions/checkout@v4
@@ -55,7 +55,6 @@ jobs:
       shell: bash
       run: |
         if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-          # Cross-compile for Pi
           cmake -B build \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
@@ -71,7 +70,7 @@ jobs:
         cmake --build build --config Release
 
     - name: Run Unit Tests
-      if: matrix.arch == 'x64' # Skip arm64 tests on x64 runner (emulation too slow here)
+      if: matrix.arch == 'x64'
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Windows" ]; then
@@ -120,13 +119,10 @@ jobs:
           release-artifacts/vigilant-linux-x64
           release-artifacts/vigilant-linux-arm64
           release-artifacts/vigilant-windows-x64.exe
-          release-artifacts/vigilant-macos-arm64
+          release-artifacts/vigilant-macos-x64
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-      
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -143,12 +139,35 @@ jobs:
       run: |
         echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-    - name: Build and push Docker image
+    - name: Build amd64 image
       uses: docker/build-push-action@v5
       with:
         context: .
+        file: ./Dockerfile
         push: true
-        platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
+        build-args: |
+          BIN=vigilant-linux-x64
         tags: |
-          ${{ steps.image.outputs.name }}:latest
-          ${{ steps.image.outputs.name }}:${{ github.ref_name }}
+          ${{ steps.image.outputs.name }}:amd64
+
+    - name: Build arm64 image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        platforms: linux/arm64
+        build-args: |
+          BIN=vigilant-linux-arm64
+        tags: |
+          ${{ steps.image.outputs.name }}:arm64
+
+    - name: Create multi-arch manifest
+      shell: bash
+      run: |
+        docker buildx imagetools create \
+          -t ${{ steps.image.outputs.name }}:latest \
+          -t ${{ steps.image.outputs.name }}:${{ github.ref_name }} \
+          ${{ steps.image.outputs.name }}:amd64 \
+          ${{ steps.image.outputs.name }}:arm64
