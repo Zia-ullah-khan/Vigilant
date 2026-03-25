@@ -8,37 +8,67 @@ on:
 
 jobs:
   build:
+    name: Build on ${{ matrix.os }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            artifact_name: vigilant-linux-x64
+          - os: windows-latest
+            arch: x64
+            artifact_name: vigilant-windows-x64.exe
+          - os: macos-latest
+            arch: arm64
+            artifact_name: vigilant-macos-arm64
+          - os: ubuntu-latest
+            arch: arm64
+            artifact_name: vigilant-linux-arm64
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Dependencies (Ubuntu)
-      if: runner.os == 'Linux'
+    - name: Dependencies (Ubuntu x64)
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
       run: sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev
 
-    - name: Dependencies (Windows - FAST)
-      if: runner.os == 'Windows'
+    - name: Dependencies (Ubuntu ARM64 Cross-Compile)
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libssl-dev:arm64
+
+    - name: Dependencies (Windows)
+      if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
-        # Use pre-installed OpenSSL instead of Choco
         echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
         echo "C:\Program Files\OpenSSL-Win64\bin" >> $env:GITHUB_PATH
 
     - name: Dependencies (macOS)
-      if: runner.os == 'macOS'
+      if: matrix.os == 'macos-latest'
       run: brew install openssl cmake
 
     - name: Configure & Build
+      shell: bash
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+          # Cross-compile for Pi
+          cmake -B build \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_BUILD_TYPE=Release
+        else
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+        fi
         cmake --build build --config Release
 
     - name: Run Unit Tests
+      if: matrix.arch == 'x64' # Skip arm64 tests on x64 runner (emulation too slow here)
       shell: bash
       run: |
         if [ "$RUNNER_OS" == "Windows" ]; then
@@ -51,20 +81,17 @@ jobs:
       shell: bash
       run: |
         mkdir -p artifacts
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          cp ./build/Release/vigilant.exe artifacts/vigilant-windows-x64.exe
-        elif [ "$RUNNER_OS" == "macOS" ]; then
-          cp ./build/vigilant artifacts/vigilant-macos-arm64
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          cp ./build/Release/vigilant.exe artifacts/${{ matrix.artifact_name }}
         else
-          cp ./build/vigilant artifacts/vigilant-linux-x64
+          cp ./build/vigilant artifacts/${{ matrix.artifact_name }}
         fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: vigilant-${{ matrix.os }}
+        name: ${{ matrix.artifact_name }}
         path: artifacts/
-        retention-days: 7
 
   release:
     needs: build
@@ -81,14 +108,16 @@ jobs:
       uses: actions/download-artifact@v4
       with:
         path: release-artifacts
+        merge-multiple: true
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          release-artifacts/vigilant-ubuntu-latest/vigilant-linux-x64
-          release-artifacts/vigilant-windows-latest/vigilant-windows-x64.exe
-          release-artifacts/vigilant-macos-latest/vigilant-macos-arm64
+          release-artifacts/vigilant-linux-x64
+          release-artifacts/vigilant-linux-arm64
+          release-artifacts/vigilant-windows-x64.exe
+          release-artifacts/vigilant-macos-arm64
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
