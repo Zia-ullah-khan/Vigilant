@@ -37,9 +37,8 @@ jobs:
     - name: Dependencies (Ubuntu ARM64 Cross-Compile)
       if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
       run: |
-        sudo dpkg --add-architecture arm64
         sudo apt-get update
-        sudo apt-get install -y cmake build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libssl-dev:arm64
+        sudo apt-get install -y cmake build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libssl-dev-arm64-cross
 
     - name: Dependencies (Windows)
       if: matrix.os == 'windows-latest'
@@ -62,8 +61,9 @@ jobs:
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
             -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DOPENSSL_SSL_LIBRARY=/usr/lib/aarch64-linux-gnu/libssl.so \
-            -DOPENSSL_CRYPTO_LIBRARY=/usr/lib/aarch64-linux-gnu/libcrypto.so \
+            -DOPENSSL_INCLUDE_DIR=/usr/aarch64-linux-gnu/include \
+            -DOPENSSL_SSL_LIBRARY=/usr/aarch64-linux-gnu/lib/libssl.so \
+            -DOPENSSL_CRYPTO_LIBRARY=/usr/aarch64-linux-gnu/lib/libcrypto.so \
             -DCMAKE_BUILD_TYPE=Release
         else
           cmake -B build -DCMAKE_BUILD_TYPE=Release
