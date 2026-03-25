@@ -19,10 +19,6 @@ jobs:
             arch: x64
             artifact_name: vigilant-linux-x64
 
-          - os: ubuntu-latest
-            arch: arm64
-            artifact_name: vigilant-linux-arm64
-
           - os: windows-latest
             arch: x64
             artifact_name: vigilant-windows-x64.exe
@@ -38,14 +34,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
         run: sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev
 
-      - name: Dependencies (Ubuntu ARM64 Cross-Compile)
-        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            cmake build-essential \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
       - name: Dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -60,16 +48,7 @@ jobs:
       - name: Configure & Build
         shell: bash
         run: |
-          if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            cmake -B build \
-              -DCMAKE_SYSTEM_NAME=Linux \
-              -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-              -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-              -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-              -DCMAKE_BUILD_TYPE=Release
-          else
-            cmake -B build -DCMAKE_BUILD_TYPE=Release
-          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
 
           cmake --build build --config Release --target vigilant vigilant_tests --parallel
 
@@ -122,7 +101,6 @@ jobs:
         with:
           files: |
             release-artifacts/vigilant-linux-x64
-            release-artifacts/vigilant-linux-arm64
             release-artifacts/vigilant-windows-x64.exe
             release-artifacts/vigilant-macos-x64
         env:
@@ -155,23 +133,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build arm64 image (Raspberry Pi)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          platforms: linux/arm64
-          build-args: |
-            BIN=vigilant-linux-arm64
-          tags: ${{ steps.image.outputs.name }}:arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Create multi-arch manifest
+      - name: Tag amd64 image as latest and version
         run: |
           docker buildx imagetools create \
             -t ${{ steps.image.outputs.name }}:latest \
             -t ${{ steps.image.outputs.name }}:${{ github.ref_name }} \
-            ${{ steps.image.outputs.name }}:amd64 \
-            ${{ steps.image.outputs.name }}:arm64
+            ${{ steps.image.outputs.name }}:amd64
