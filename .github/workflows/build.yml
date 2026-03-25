@@ -1,4 +1,5 @@
 name: Build, Test, and Package
+
 on:
   push:
     branches: [ main ]
@@ -17,83 +18,89 @@ jobs:
           - os: ubuntu-latest
             arch: x64
             artifact_name: vigilant-linux-x64
+
           - os: ubuntu-latest
             arch: arm64
             artifact_name: vigilant-linux-arm64
+
           - os: windows-latest
             arch: x64
             artifact_name: vigilant-windows-x64.exe
+
           - os: macos-latest
             arch: x64
             artifact_name: vigilant-macos-x64
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Dependencies (Ubuntu x64)
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
-      run: sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev
+      - name: Dependencies (Ubuntu x64)
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev
 
-    - name: Dependencies (Ubuntu ARM64 Cross-Compile)
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libssl-dev-arm64-cross
+      - name: Dependencies (Ubuntu ARM64 Cross-Compile)
+        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake build-essential \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libssl-dev:arm64
 
-    - name: Dependencies (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: pwsh
-      run: |
-        echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
-        echo "C:\Program Files\OpenSSL-Win64\bin" >> $env:GITHUB_PATH
+      - name: Dependencies (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_ROOT_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+          echo "C:\Program Files\OpenSSL-Win64\bin" >> $env:GITHUB_PATH
 
-    - name: Dependencies (macOS)
-      if: matrix.os == 'macos-latest'
-      run: brew install openssl cmake
+      - name: Dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install openssl cmake
 
-    - name: Configure & Build
-      shell: bash
-      run: |
-        if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-          cmake -B build \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DOPENSSL_INCLUDE_DIR=/usr/aarch64-linux-gnu/include \
-            -DOPENSSL_SSL_LIBRARY=/usr/aarch64-linux-gnu/lib/libssl.so \
-            -DOPENSSL_CRYPTO_LIBRARY=/usr/aarch64-linux-gnu/lib/libcrypto.so \
-            -DCMAKE_BUILD_TYPE=Release
-        else
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-        fi
-        cmake --build build --config Release
+      - name: Configure & Build
+        shell: bash
+        run: |
+          if [ "${{ matrix.arch }}" == "arm64" ] && [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
+            cmake -B build \
+              -DCMAKE_SYSTEM_NAME=Linux \
+              -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+              -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+              -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+              -DCMAKE_BUILD_TYPE=Release
+          else
+            cmake -B build -DCMAKE_BUILD_TYPE=Release
+          fi
 
-    - name: Run Unit Tests
-      if: matrix.arch == 'x64'
-      shell: bash
-      run: |
-        if [ "$RUNNER_OS" == "Windows" ]; then
-          ./build/Release/vigilant_tests.exe "~[integration]"
-        else
-          ./build/vigilant_tests "~[integration]"
-        fi
+          cmake --build build --config Release --target vigilant -j$(nproc)
 
-    - name: Prepare artifacts
-      shell: bash
-      run: |
-        mkdir -p artifacts
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-          cp ./build/Release/vigilant.exe artifacts/${{ matrix.artifact_name }}
-        else
-          cp ./build/vigilant artifacts/${{ matrix.artifact_name }}
-        fi
+      - name: Run Unit Tests
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./build/Release/vigilant_tests.exe "~[integration]"
+          else
+            ./build/vigilant_tests "~[integration]"
+          fi
 
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.artifact_name }}
-        path: artifacts/
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cp ./build/Release/vigilant.exe artifacts/${{ matrix.artifact_name }}
+          else
+            cp ./build/vigilant artifacts/${{ matrix.artifact_name }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: artifacts/
 
   release:
     needs: build
@@ -102,72 +109,71 @@ jobs:
     permissions:
       contents: write
       packages: write
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: release-artifacts
-        merge-multiple: true
+      - uses: actions/checkout@v4
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          release-artifacts/vigilant-linux-x64
-          release-artifacts/vigilant-linux-arm64
-          release-artifacts/vigilant-windows-x64.exe
-          release-artifacts/vigilant-macos-x64
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-artifacts/vigilant-linux-x64
+            release-artifacts/vigilant-linux-arm64
+            release-artifacts/vigilant-windows-x64.exe
+            release-artifacts/vigilant-macos-x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Normalize image name
-      id: image
-      shell: bash
-      run: |
-        echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build amd64 image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        platforms: linux/amd64
-        build-args: |
-          BIN=vigilant-linux-x64
-        tags: |
-          ${{ steps.image.outputs.name }}:amd64
+      - name: Normalize image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-    - name: Build arm64 image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        platforms: linux/arm64
-        build-args: |
-          BIN=vigilant-linux-arm64
-        tags: |
-          ${{ steps.image.outputs.name }}:arm64
+      - name: Build amd64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            BIN=vigilant-linux-x64
+          tags: ${{ steps.image.outputs.name }}:amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Create multi-arch manifest
-      shell: bash
-      run: |
-        docker buildx imagetools create \
-          -t ${{ steps.image.outputs.name }}:latest \
-          -t ${{ steps.image.outputs.name }}:${{ github.ref_name }} \
-          ${{ steps.image.outputs.name }}:amd64 \
-          ${{ steps.image.outputs.name }}:arm64
+      - name: Build arm64 image (Raspberry Pi)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/arm64
+          build-args: |
+            BIN=vigilant-linux-arm64
+          tags: ${{ steps.image.outputs.name }}:arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            -t ${{ steps.image.outputs.name }}:latest \
+            -t ${{ steps.image.outputs.name }}:${{ github.ref_name }} \
+            ${{ steps.image.outputs.name }}:amd64 \
+            ${{ steps.image.outputs.name }}:arm64

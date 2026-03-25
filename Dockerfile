@@ -1,12 +1,11 @@
-FROM python:3.12-slim
+FROM debian:12-slim
 
 ARG BIN
 
-WORKDIR /app
-COPY --chmod=755 release-artifacts/${BIN} /usr/local/bin/vigilant
+RUN apt-get update && apt-get install -y libssl3 && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 9000 9001
-VOLUME ["/etc/vigilant/services"]
+COPY release-artifacts/${BIN} /usr/local/bin/vigilant
 
-ENTRYPOINT ["/usr/local/bin/vigilant"]
-CMD ["server", "-d", "/etc/vigilant/services", "-p", "9000", "-dash", "9001"]
+RUN chmod +x /usr/local/bin/vigilant
+
+CMD ["vigilant"]
