@@ -1,3 +1,6 @@
+![Build Status](https://github.com/Zia-ullah-khan/Vigilant/actions/workflows/build.yml/badge.svg)
+![Platform Support](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-blue)
+
 # Vigilant
 
 Vigilant is a lightweight, dynamic proxy server and service manager written in C++17. It allows you to route traffic to configured services, manage their lifecycle (including automatically spinning them down after a period of inactivity), and provides a dashboard for monitoring.
