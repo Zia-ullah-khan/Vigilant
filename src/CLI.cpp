@@ -204,6 +204,58 @@ static RuntimeType DetectRuntime(const fs::path& repoDir)
     return RuntimeType::Unknown;
 }
 
+static bool IsValidCertDomain(const std::string& domain)
+{
+    if (domain.empty() || domain.size() > 253) {
+        return false;
+    }
+
+    for (char c : domain) {
+        const auto u = static_cast<unsigned char>(c);
+        if (!(std::isalnum(u) || c == '.' || c == '-')) {
+            return false;
+        }
+    }
+
+    if (domain.front() == '.' || domain.front() == '-' ||
+        domain.back() == '.' || domain.back() == '-') {
+        return false;
+    }
+
+    if (domain.find("..") != std::string::npos) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool IsSafeWebrootPath(const std::string& path)
+{
+    for (char c : path) {
+        if (c == ';' || c == '|' || c == '&' || c == '`' || c == '$' ||
+            c == '\r' || c == '\n' || c == '<' || c == '>') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool IsSafeCertEmail(const std::string& email)
+{
+    if (email.empty() || email.size() > 254) {
+        return false;
+    }
+
+    for (char c : email) {
+        const auto u = static_cast<unsigned char>(c);
+        if (!(std::isalnum(u) || c == '@' || c == '.' || c == '_' || c == '+' || c == '-')) {
+            return false;
+        }
+    }
+
+    return email.find('@') != std::string::npos;
+}
+
 static bool IsValidEnvPair(const std::string& pair)
 {
     const size_t eq = pair.find('=');
@@ -669,6 +721,102 @@ int StartDaemon()
 int RestartDaemon()
 {
     return ManageDaemon("restart");
+}
+
+int IssueCertificate(const CertOptions& options)
+{
+    if (options.domains.empty()) {
+        std::cerr << "Error: At least one domain is required (e.g. vigilant cert api.example.com).\n";
+        return 1;
+    }
+
+    for (const auto& domain : options.domains) {
+        if (!IsValidCertDomain(domain)) {
+            std::cerr << "Error: Invalid domain '" << domain << "'.\n";
+            return 1;
+        }
+    }
+
+    if (!options.email.empty() && !IsSafeCertEmail(options.email)) {
+        std::cerr << "Error: Invalid --email value.\n";
+        return 1;
+    }
+
+    if (!options.email.empty() && options.unsafeRegisterWithoutEmail) {
+        std::cerr << "Error: Use either --email or --unsafe-register, not both.\n";
+        return 1;
+    }
+
+    if (!IsSafeWebrootPath(options.webroot)) {
+        std::cerr << "Error: Invalid --webroot path.\n";
+        return 1;
+    }
+
+#ifdef _WIN32
+    std::cerr << "Error: 'vigilant cert' requires Certbot on Linux or macOS.\n";
+    return 1;
+#else
+    const fs::path webroot(options.webroot);
+    const fs::path challengeDir = webroot / ".well-known" / "acme-challenge";
+    std::error_code ec;
+    fs::create_directories(challengeDir, ec);
+    if (ec) {
+        std::cerr << "Error: Cannot create ACME webroot " << challengeDir.string()
+                  << ": " << ec.message() << "\n";
+        std::cerr << "Hint: run with sudo or pass --webroot pointing at a writable directory.\n";
+        return 1;
+    }
+
+    std::vector<std::string> args = {"certonly", "--webroot", "-w", options.webroot};
+    for (const auto& domain : options.domains) {
+        args.push_back("-d");
+        args.push_back(domain);
+    }
+
+    if (options.staging) {
+        args.push_back("--staging");
+    }
+    if (options.dryRun) {
+        args.push_back("--dry-run");
+    }
+    if (options.forceRenewal) {
+        args.push_back("--force-renewal");
+    }
+
+    if (!options.email.empty()) {
+        args.push_back("--non-interactive");
+        args.push_back("--agree-tos");
+        args.push_back("-m");
+        args.push_back(options.email);
+    } else if (options.unsafeRegisterWithoutEmail) {
+        args.push_back("--non-interactive");
+        args.push_back("--agree-tos");
+        args.push_back("--register-unsafely-without-email");
+    }
+
+    std::cout << "Issuing certificate via Certbot (HTTP-01 webroot).\n";
+    std::cout << "Webroot: " << options.webroot << " (tokens must be served under /.well-known/acme-challenge/)\n";
+    std::cout << "Domains: ";
+    for (size_t i = 0; i < options.domains.size(); ++i) {
+        if (i > 0) {
+            std::cout << ", ";
+        }
+        std::cout << options.domains[i];
+    }
+    std::cout << "\n\n";
+
+    const int rc = RunCommand("certbot", args);
+    if (rc != 0) {
+        return rc;
+    }
+
+    const std::string& primary = options.domains.front();
+    std::cout << "\nTypical paths for .vig TLS keys:\n"
+              << "  cert = /etc/letsencrypt/live/" << primary << "/fullchain.pem\n"
+              << "  key = /etc/letsencrypt/live/" << primary << "/privkey.pem\n";
+
+    return 0;
+#endif
 }
 
 }

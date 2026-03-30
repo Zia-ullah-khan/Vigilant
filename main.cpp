@@ -39,6 +39,7 @@ static void PrintUsage(const char* program)
               << "  rm          Remove a deployed service (e.g. vigilant rm app)\n"
               << "  start       Start the vigilant system service (systemd)\n"
               << "  restart     Restart the vigilant system service (systemd)\n"
+              << "  cert        Request TLS certs via Certbot HTTP-01 webroot (alias: certbot)\n"
               << "\nDeploy Options:\n"
               << "  --branch <name>      Git branch to deploy\n"
               << "  --tag <name>         Git tag to deploy\n"
@@ -50,6 +51,13 @@ static void PrintUsage(const char* program)
               << "  --container <name>   Docker container name override\n"
               << "  --build-arg <k=v>    Docker build arg (repeatable)\n"
               << "  --env <k=v>          Runtime env var (repeatable)\n"
+              << "\nCert Options (vigilant cert <domain> [domain...]):\n"
+              << "  --webroot <path>     Webroot for HTTP-01 (default: /var/www/html, matches Vigilant ACME path)\n"
+              << "  --staging            Use Let's Encrypt staging (higher limits, untrusted chain)\n"
+              << "  --dry-run            Test validation without storing a certificate\n"
+              << "  --force-renewal        Request a new cert even if not near expiry\n"
+              << "  --email <addr>       Non-interactive: agree terms and register with this email\n"
+              << "  --unsafe-register    Non-interactive without email (not recommended for production)\n"
               << "\nServer Options:\n"
               << "  -d <dir>    Service config directory (default: /etc/vigilant/services)\n"
               << "  -p <port>   Listen port (default: 9000)\n"
@@ -81,7 +89,8 @@ int main(int argc, char* argv[])
     std::string cmd = (argc > 1) ? argv[1] : "server";
     int startIndex = 1;
 
-    if (cmd == "deploy" || cmd == "ls" || cmd == "logs" || cmd == "rm" || cmd == "start" || cmd == "restart" || cmd == "server") {
+    if (cmd == "deploy" || cmd == "ls" || cmd == "logs" || cmd == "rm" || cmd == "start" || cmd == "restart" ||
+        cmd == "cert" || cmd == "certbot" || cmd == "server") {
         startIndex = 2;
     } else if (cmd == "-h" || cmd == "--help") {
         PrintUsage(argv[0]);
@@ -149,6 +158,34 @@ int main(int argc, char* argv[])
         return CLI::StartDaemon();
     } else if (cmd == "restart") {
         return CLI::RestartDaemon();
+    } else if (cmd == "cert" || cmd == "certbot") {
+        CLI::CertOptions certOpts;
+        for (int i = startIndex; i < argc; ++i) {
+            std::string arg = argv[i];
+            if (arg == "--webroot" && i + 1 < argc) {
+                certOpts.webroot = argv[++i];
+            } else if (arg == "--staging") {
+                certOpts.staging = true;
+            } else if (arg == "--dry-run") {
+                certOpts.dryRun = true;
+            } else if (arg == "--force-renewal") {
+                certOpts.forceRenewal = true;
+            } else if (arg == "--email" && i + 1 < argc) {
+                certOpts.email = argv[++i];
+            } else if (arg == "--unsafe-register") {
+                certOpts.unsafeRegisterWithoutEmail = true;
+            } else if (arg == "-h" || arg == "--help") {
+                PrintUsage(argv[0]);
+                return 0;
+            } else if (!arg.empty() && arg[0] == '-') {
+                std::cerr << "Unknown cert option: " << arg << "\n";
+                PrintUsage(argv[0]);
+                return 1;
+            } else {
+                certOpts.domains.push_back(arg);
+            }
+        }
+        return CLI::IssueCertificate(certOpts);
     }
 
     for (int i = startIndex; i < argc; ++i)

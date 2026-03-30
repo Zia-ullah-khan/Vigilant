@@ -152,3 +152,37 @@ TEST_CASE("CLI DeployGit validates unsafe or conflicting input", "[cli]")
 
     test_helpers::CleanupDir(root);
 }
+
+TEST_CASE("CLI cert rejects empty domain list", "[cli]")
+{
+    CLI::CertOptions opts;
+    const int rc = CLI::IssueCertificate(opts);
+    REQUIRE(rc != 0);
+}
+
+TEST_CASE("CLI cert rejects invalid domain strings", "[cli]")
+{
+    CLI::CertOptions opts;
+    opts.domains = {"api.example.com;rm -rf /"};
+    const int rc = CLI::IssueCertificate(opts);
+    REQUIRE(rc != 0);
+}
+
+TEST_CASE("CLI cert rejects bad email", "[cli]")
+{
+    CLI::CertOptions opts;
+    opts.domains = {"api.example.com"};
+    opts.email = "not-an-email";
+    const int rc = CLI::IssueCertificate(opts);
+    REQUIRE(rc != 0);
+}
+
+TEST_CASE("CLI cert rejects email and unsafe-register together", "[cli]")
+{
+    CLI::CertOptions opts;
+    opts.domains = {"api.example.com"};
+    opts.email = "a@b.com";
+    opts.unsafeRegisterWithoutEmail = true;
+    const int rc = CLI::IssueCertificate(opts);
+    REQUIRE(rc != 0);
+}
