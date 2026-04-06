@@ -36,6 +36,7 @@ add_executable(vigilant_tests
     tests/test_vigconfig.cpp
     tests/test_cli.cpp
     tests/test_traffic.cpp
+    tests/test_ssl.cpp
     src/VigConfig.cpp
     src/CLI.cpp
     src/Logger.cpp
