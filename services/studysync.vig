@@ -9,3 +9,6 @@ image = studysync:latest
 container = studysync-container
 health = /health
 timeout = 30
+
+cert={path to cert}
+key={path to key}
